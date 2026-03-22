@@ -113,7 +113,7 @@ clawsentry init openclaw --setup --dry-run
 
       Environment variables:
         OPENCLAW_WS_URL=ws://127.0.0.1:18789
-        OPENCLAW_OPERATOR_TOKEN=afbf637a...
+        OPENCLAW_OPERATOR_TOKEN=xxxxxxxxxxxxxxxx...
         CS_AUTH_TOKEN=xK7m9p2QaB3...
 
       Next steps:
@@ -214,7 +214,7 @@ clawsentry gateway
 ```bash
 export OPENCLAW_WEBHOOK_TOKEN=my-webhook-token
 export OPENCLAW_ENFORCEMENT_ENABLED=true
-export OPENCLAW_OPERATOR_TOKEN=afbf637a...
+export OPENCLAW_OPERATOR_TOKEN=xxxxxxxxxxxxxxxx...
 export OPENCLAW_WS_URL=ws://127.0.0.1:18789
 
 clawsentry gateway --gateway-port 9100 --webhook-port 9101

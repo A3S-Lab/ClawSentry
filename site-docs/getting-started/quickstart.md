@@ -177,7 +177,7 @@ clawsentry init openclaw --auto-detect --setup
         CS_UDS_PATH=/tmp/clawsentry.sock
         CS_AUTH_TOKEN=Fk9m2xQ...
         OPENCLAW_WS_URL=ws://127.0.0.1:18789
-        OPENCLAW_OPERATOR_TOKEN=afbf637a...（从 openclaw.json 自动读取）
+        OPENCLAW_OPERATOR_TOKEN=xxxxxxxxxxxxxxxx...（从 openclaw.json 自动读取）
         OPENCLAW_ENFORCEMENT_ENABLED=true
 
       Next steps:
