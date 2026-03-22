@@ -1,0 +1,120 @@
+site_name: ClawSentry
+site_description: Agent Harness Protocol (AHP) 参考实现 — 面向 AI Agent 运行时的统一安全监督网关
+site_url: https://elroyper.github.io/ClawSentry/
+repo_url: https://github.com/Elroyper/ClawSentry
+repo_name: Elroyper/ClawSentry
+docs_dir: site-docs
+
+theme:
+  name: material
+  language: zh
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: 切换到浅色模式
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: 切换到深色模式
+  font:
+    text: Noto Sans SC
+    code: JetBrains Mono
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search:
+      lang:
+        - zh
+        - en
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: date
+      fallback_to_build_date: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path: ['.', 'site-docs']
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.mark
+  - pymdownx.keys
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Elroyper/ClawSentry
+
+copyright: Copyright &copy; 2026 ClawSentry Contributors
+
+nav:
+  - 首页: index.md
+  - 入门指南:
+    - 安装: getting-started/installation.md
+    - 快速开始: getting-started/quickstart.md
+    - 核心概念: getting-started/concepts.md
+    - 常见问题: getting-started/faq.md
+  - 集成接入:
+    - a3s-code 集成: integration/a3s-code.md
+    - OpenClaw 集成: integration/openclaw.md
+  - 配置参考:
+    - 环境变量: configuration/env-vars.md
+    - 策略调优: configuration/policy-tuning.md
+    - LLM 配置: configuration/llm-config.md
+  - CLI 命令: cli/index.md
+  - REST API:
+    - 决策端点: api/decisions.md
+    - 报表与监控: api/reporting.md
+    - 认证: api/authentication.md
+  - 三层决策详解:
+    - L1 规则引擎: decision-layers/l1-rules.md
+    - L2 语义分析: decision-layers/l2-semantic.md
+    - L3 审查 Agent: decision-layers/l3-agent.md
+  - Web 仪表板: dashboard/index.md
+  - 高级用法:
+    - 自定义 L3 Skills: advanced/custom-skills.md
+    - 自定义 L2 Analyzer: advanced/custom-analyzer.md
+    - 自定义 Adapter: advanced/custom-adapter.md
+  - 部署运维:
+    - 生产部署: operations/deployment.md
+    - 故障排查: operations/troubleshooting.md
+  - 更新日志: changelog.md
