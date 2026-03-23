@@ -25,7 +25,7 @@ clawsentry-stack     # 等价于 clawsentry stack
 ```
 
 !!! info "`.env.clawsentry` 自动加载"
-    `clawsentry gateway`、`clawsentry stack` 和 `clawsentry-gateway`、`clawsentry-stack` 启动时会自动读取当前目录下的 `.env.clawsentry` 文件，并将其中的环境变量注入进程。**已存在的环境变量不会被覆盖。**
+    `clawsentry gateway`、`clawsentry stack`、`clawsentry start` 和 `clawsentry-gateway`、`clawsentry-stack` 启动时会自动读取当前目录下的 `.env.clawsentry` 文件，并将其中的环境变量注入进程。**已存在的环境变量不会被覆盖。**
 
     文件格式：
     ```ini
@@ -34,6 +34,117 @@ clawsentry-stack     # 等价于 clawsentry stack
     CS_HTTP_PORT=9100
     OPENCLAW_OPERATOR_TOKEN="quoted-value"
     ```
+
+---
+
+## clawsentry start
+
+**一键启动 ClawSentry 监督网关**（推荐方式）。自动检测框架、初始化配置、启动 Gateway 并显示实时监控。
+
+### 语法
+
+```bash
+clawsentry start [--framework {openclaw,a3s-code}] [--host HOST] [--port PORT]
+                 [--no-watch] [--interactive | -i]
+```
+
+### 选项
+
+| 选项 | 默认值 | 说明 |
+|------|--------|------|
+| `--framework` | 自动检测 | 目标框架：`openclaw` 或 `a3s-code` |
+| `--host` | `127.0.0.1` | Gateway HTTP 监听地址 |
+| `--port` | `8080` 或 `CS_HTTP_PORT` | Gateway HTTP 监听端口 |
+| `--no-watch` | `false` | 仅启动 Gateway，不显示实时监控 |
+| `--interactive` / `-i` | `false` | 启用 DEFER 决策交互式审批 |
+
+### 工作流程
+
+`clawsentry start` 会自动执行以下步骤：
+
+1. **框架检测**：扫描 `~/.openclaw/openclaw.json` 或 `a3s-code` 配置文件，自动识别框架类型
+2. **配置初始化**：如果 `.env.clawsentry` 不存在，自动运行 `clawsentry init <framework>`
+3. **环境加载**：读取 `.env.clawsentry` 并注入环境变量
+4. **Gateway 启动**：后台启动 Gateway 进程，等待健康检查通过
+5. **实时监控**：前台显示 `clawsentry watch` 输出（除非使用 `--no-watch`）
+6. **优雅关闭**：按 `Ctrl+C` 时，先发送 SIGTERM，5 秒后降级为 SIGKILL
+
+### 示例
+
+#### 自动检测并启动
+
+```bash
+clawsentry start
+```
+
+??? example "终端输出"
+    ```
+    [clawsentry] Detected framework: openclaw
+    [clawsentry] Configuration already initialized
+    [clawsentry] Starting gateway on 127.0.0.1:8080...
+    INFO:     ahp-stack: === ClawSentry Supervision Gateway ===
+    INFO:     ahp-stack: HTTP      : 127.0.0.1:8080
+    INFO:     ahp-stack: OpenClaw  : WS ws://127.0.0.1:18789
+    INFO:     openclaw-ws: Connected to OpenClaw Gateway
+
+    Web UI: http://127.0.0.1:8080/ui?token=xK7m9p2QaB3...
+
+    ──────────────────────────────────────────────────────────────
+    [14:23:05] DECISION  session=my-session
+      verdict : ALLOW
+      risk    : low
+      command : cat README.md
+    ──────────────────────────────────────────────────────────────
+    ```
+
+#### 指定框架和端口
+
+```bash
+clawsentry start --framework a3s-code --port 9100
+```
+
+#### 仅启动 Gateway（不显示监控）
+
+```bash
+clawsentry start --no-watch
+```
+
+此模式下，Gateway 在后台运行，命令立即返回。你可以稍后手动运行 `clawsentry watch` 查看事件。
+
+#### 启用交互式 DEFER 审批
+
+```bash
+clawsentry start --interactive
+```
+
+当收到 DEFER 决策时，终端会提示你输入 `[A]llow`、`[D]eny` 或 `[S]kip`。
+
+### Web UI 自动登录
+
+启动时，终端会显示带 token 的 Web UI URL：
+
+```
+Web UI: http://127.0.0.1:8080/ui?token=xK7m9p2QaB3...
+```
+
+点击该 URL 即可自动登录，无需手动输入 token。
+
+### 错误处理
+
+- **框架检测失败**：如果无法自动检测框架，命令会报错并提示使用 `--framework` 参数
+- **初始化失败**：如果 `clawsentry init` 失败（如权限问题），命令会抛出 `RuntimeError`
+- **Gateway 启动失败**：如果 Gateway 进程在 0.1 秒内退出，命令会报错并显示日志路径
+- **健康检查超时**：如果 5 秒内 Gateway 未响应健康检查，命令会报错
+
+### 日志位置
+
+Gateway 的 stdout/stderr 输出会写入临时日志文件：
+
+```
+/tmp/clawsentry-gateway-<timestamp>.log
+```
+
+如果启动失败，命令会提示查看该日志文件。
 
 ---
 

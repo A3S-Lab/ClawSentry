@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
+import { setToken } from './api/client'
 import Layout from './components/Layout'
 import LoginForm from './components/LoginForm'
 import Dashboard from './pages/Dashboard'
@@ -11,6 +12,21 @@ import DeferPanel from './pages/DeferPanel'
 
 export default function App() {
   const { authenticated, checking, check, login } = useAuth()
+
+  // Auto-login from URL ?token= parameter
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const urlToken = params.get('token')
+    if (urlToken) {
+      setToken(urlToken)
+      // Remove token from URL bar (security: don't leave it visible)
+      params.delete('token')
+      const cleanUrl = params.toString()
+        ? `${window.location.pathname}?${params.toString()}`
+        : window.location.pathname
+      window.history.replaceState({}, '', cleanUrl)
+    }
+  }, [])
 
   useEffect(() => { check() }, [check])
 

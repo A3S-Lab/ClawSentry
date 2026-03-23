@@ -40,15 +40,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     init_parser.add_argument(
         "--auto-detect",
-        action="store_true",
-        default=False,
-        help="Auto-detect existing framework configuration (e.g. OpenClaw tokens).",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Auto-detect existing framework configuration (default: on).",
     )
     init_parser.add_argument(
         "--setup",
-        action="store_true",
-        default=False,
-        help="Auto-configure OpenClaw settings for Monitor integration.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Auto-configure framework settings for ClawSentry integration (default: on).",
     )
     init_parser.add_argument(
         "--dry-run",
@@ -120,6 +120,42 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Prompt operator to Allow/Deny/Skip on DEFER decisions.",
     )
 
+    # --- start ---
+    start_parser = sub.add_parser(
+        "start",
+        help="One-command launch: auto-init + gateway (background) + watch (foreground).",
+    )
+    start_parser.add_argument(
+        "--framework",
+        choices=["openclaw", "a3s-code"],
+        default=None,
+        help="Target framework (auto-detected if omitted).",
+    )
+    start_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Gateway bind host (default: 127.0.0.1).",
+    )
+    start_parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("CS_HTTP_PORT", "8080")),
+        help="Gateway HTTP port (default: 8080 or CS_HTTP_PORT).",
+    )
+    start_parser.add_argument(
+        "--no-watch",
+        action="store_true",
+        default=False,
+        help="Start gateway in background only, without watch.",
+    )
+    start_parser.add_argument(
+        "--interactive",
+        "-i",
+        action="store_true",
+        default=False,
+        help="Enable interactive DEFER handling in watch.",
+    )
+
     return parser
 
 
@@ -171,6 +207,28 @@ def main(argv: list[str] | None = None) -> None:
             filter_types=args.filter,
             json_mode=args.json,
             color=not args.no_color,
+            interactive=args.interactive,
+        )
+
+    elif args.command == "start":
+        from .start_command import detect_framework, run_start
+
+        framework = args.framework
+        if framework is None:
+            framework = detect_framework()
+            if framework is None:
+                print(
+                    "Could not auto-detect framework.\n"
+                    "Use: clawsentry start --framework <openclaw|a3s-code>",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+        run_start(
+            framework=framework,
+            host=args.host,
+            port=args.port,
+            no_watch=args.no_watch,
             interactive=args.interactive,
         )
 

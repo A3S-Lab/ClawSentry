@@ -25,20 +25,40 @@ Requires Python >= 3.11.
 
 ## Quick Start
 
-### [a3s-code](https://github.com/A3S-Lab/Code)
+### One-Command Launch (Recommended)
+
+```bash
+clawsentry start                   # auto-detect framework + init + gateway + watch
+# or specify framework:
+clawsentry start --framework openclaw
+clawsentry start --framework a3s-code --interactive  # enable DEFER interaction
+```
+
+The `start` command will:
+1. Auto-detect your framework (OpenClaw or a3s-code)
+2. Initialize configuration if needed
+3. Start the gateway in the background
+4. Display live monitoring in the foreground
+5. Show Web UI URL with auto-login token
+
+Press Ctrl+C to gracefully shutdown.
+
+### Manual Step-by-Step
+
+#### [a3s-code](https://github.com/A3S-Lab/Code)
 
 ```bash
 clawsentry init a3s-code --setup   # generate config + patch a3s-code settings
-clawsentry gateway                 # start gateway (default :8765)
+clawsentry gateway                 # start gateway (default :8080)
 clawsentry watch                   # tail live decisions in your terminal
 ```
 
-### [OpenClaw](https://github.com/openclaw/openclaw)
+#### [OpenClaw](https://github.com/openclaw/openclaw)
 
 ```bash
 clawsentry init openclaw --setup   # generate config + patch OpenClaw settings
-clawsentry gateway                 # start gateway (default :8765)
-open http://localhost:8765/ui      # open web dashboard
+clawsentry gateway                 # start gateway (default :8080)
+open http://localhost:8080/ui      # open web dashboard
 ```
 
 ## Architecture

@@ -7,7 +7,56 @@ description: 5 分钟内启动 ClawSentry 并对接 AI Agent 框架
 
 本指南将带你在 5 分钟内完成 ClawSentry 的配置与启动。ClawSentry 是 AHP 协议的参考实现，支持多种 AI Agent 框架的安全监督。
 
-根据你使用的 Agent 框架，选择对应的集成路径：
+## :zap: 一键启动（推荐）
+
+最简单的启动方式，自动检测框架并完成所有配置：
+
+```bash
+clawsentry start
+```
+
+该命令会自动：
+
+1. 检测你的 Agent 框架（OpenClaw 或 a3s-code）
+2. 初始化配置（如果尚未初始化）
+3. 加载环境变量
+4. 后台启动 Gateway
+5. 前台显示实时监控
+
+??? example "终端输出示例"
+    ```
+    [clawsentry] Detected framework: openclaw
+    [clawsentry] Configuration already initialized
+    [clawsentry] Starting gateway...
+    INFO:     ahp-stack: === ClawSentry Supervision Gateway ===
+    INFO:     ahp-stack: HTTP      : 127.0.0.1:8080
+    INFO:     ahp-stack: OpenClaw  : WS ws://127.0.0.1:18789
+    INFO:     openclaw-ws: Connected to OpenClaw Gateway
+
+    Web UI: http://127.0.0.1:8080/ui?token=xK7m9p2Q...
+
+    ──────────────────────────────────────────────────────────────
+    [14:23:05] DECISION  session=my-session
+      verdict : ALLOW
+      risk    : low
+      command : cat README.md
+    ──────────────────────────────────────────────────────────────
+    ```
+
+!!! tip "可选参数"
+    ```bash
+    clawsentry start --framework openclaw    # 指定框架
+    clawsentry start --interactive           # 启用 DEFER 交互式审批
+    clawsentry start --no-watch              # 仅启动 Gateway，不显示监控
+    ```
+
+按 `Ctrl+C` 优雅关闭 Gateway 和监控。
+
+---
+
+## 分步操作（高级用户）
+
+如果你需要更精细的控制，可以选择分步操作。根据你使用的 Agent 框架，选择对应的集成路径：
 
 <div class="grid cards" markdown>
 
