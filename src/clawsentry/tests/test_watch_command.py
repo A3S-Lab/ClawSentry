@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from clawsentry.cli.watch_command import (
+    SessionTracker,
     format_alert,
     format_decision,
     format_event,
@@ -36,7 +37,7 @@ class TestParseSSELine:
 
 
 # ---------------------------------------------------------------------------
-# TestFormatDecision
+# TestFormatDecision  (existing tests updated for new mixed format)
 # ---------------------------------------------------------------------------
 
 
@@ -58,11 +59,13 @@ class TestFormatDecision:
     def test_block_decision_red_color(self):
         event = self._make_decision(decision="block", risk_level="high")
         result = format_decision(event, color=True)
-        # Should contain ANSI red for BLOCK
+        # BLOCK uses red ANSI colour
         assert "\033[91m" in result
         assert "BLOCK" in result
         assert "rm -rf /data" in result
-        assert "risk=high" in result
+        # New format: tree-style "Risk: 🔴 high" instead of "risk=high"
+        assert "Risk:" in result
+        assert "high" in result
         assert "D1: destructive pattern" in result
 
     def test_allow_decision_green_color(self):
@@ -73,7 +76,8 @@ class TestFormatDecision:
         assert "\033[92m" in result
         assert "ALLOW" in result
         assert "echo hello" in result
-        assert "risk=low" in result
+        # Compact ALLOW format does NOT show risk level
+        assert "Risk:" not in result
 
     def test_defer_decision_no_color(self):
         event = self._make_decision(
@@ -84,19 +88,178 @@ class TestFormatDecision:
         assert "\033[" not in result
         assert "DEFER" in result
         assert "pip install requests" in result
-        assert "risk=medium" in result
+        # New format: "Risk: medium" not "risk=medium"
+        assert "Risk:" in result
+        assert "medium" in result
 
-    def test_command_truncated_to_40_chars(self):
+    def test_command_truncated_to_50_chars(self):
         long_command = "a" * 60
         event = self._make_decision(command=long_command)
         result = format_decision(event, color=False)
-        # The displayed command should be at most 40 chars (37 + "...")
+        # Full 60-char command should not appear; truncation should occur
         assert long_command not in result
         assert "aaa..." in result
 
 
 # ---------------------------------------------------------------------------
-# TestFormatAlert
+# TestDecisionFormatterMixedFormat  (new)
+# ---------------------------------------------------------------------------
+
+
+class TestDecisionFormatterMixedFormat:
+    """Tests for the mixed display format: compact ALLOW, detailed BLOCK/DEFER."""
+
+    def _make(self, **overrides) -> dict:
+        base = {
+            "type": "decision",
+            "session_id": "sess-001",
+            "decision": "block",
+            "command": "rm -rf /data",
+            "risk_level": "high",
+            "reason": "D1: destructive pattern",
+            "timestamp": "2026-03-22T10:30:45Z",
+        }
+        base.update(overrides)
+        return base
+
+    # --- ALLOW compact ---
+
+    def test_allow_is_single_line(self):
+        event = self._make(decision="allow", risk_level="low", command="cat README.md")
+        result = format_decision(event, color=False)
+        nonempty = [ln for ln in result.split("\n") if ln.strip()]
+        assert len(nonempty) == 1
+
+    def test_allow_contains_decision_and_command(self):
+        event = self._make(decision="allow", command="cat README.md")
+        result = format_decision(event, color=False)
+        assert "ALLOW" in result
+        assert "cat README.md" in result
+
+    def test_allow_does_not_show_risk(self):
+        event = self._make(decision="allow", risk_level="low")
+        result = format_decision(event, color=False)
+        assert "Risk:" not in result
+
+    def test_allow_does_not_show_reason(self):
+        event = self._make(decision="allow", reason="read-only operation")
+        result = format_decision(event, color=False)
+        assert "Reason:" not in result
+
+    # --- BLOCK detailed ---
+
+    def test_block_is_multiline(self):
+        event = self._make(decision="block", risk_level="high", reason="D1")
+        result = format_decision(event, color=False)
+        nonempty = [ln for ln in result.split("\n") if ln.strip()]
+        assert len(nonempty) >= 2
+
+    def test_block_has_tree_structure(self):
+        event = self._make(decision="block", risk_level="high", reason="D1")
+        result = format_decision(event, color=False)
+        assert "├─" in result or "└─" in result
+
+    def test_block_shows_risk_and_reason(self):
+        event = self._make(decision="block", risk_level="high", reason="D1: pattern")
+        result = format_decision(event, color=False)
+        assert "Risk:" in result
+        assert "high" in result
+        assert "Reason:" in result
+        assert "D1: pattern" in result
+
+    # --- DEFER with expiry ---
+
+    def test_defer_shows_expires_countdown(self):
+        event = self._make(
+            decision="defer",
+            risk_level="high",
+            reason="needs approval",
+            expires_at=int((time.time() + 60) * 1000),
+        )
+        result = format_decision(event, color=False)
+        assert "Expires in:" in result
+
+    def test_defer_without_expires_no_countdown(self):
+        event = self._make(decision="defer", risk_level="high", reason="needs approval")
+        result = format_decision(event, color=False)
+        assert "Expires" not in result
+
+    def test_defer_past_expiry_no_countdown(self):
+        event = self._make(
+            decision="defer",
+            risk_level="high",
+            expires_at=int((time.time() - 30) * 1000),
+        )
+        result = format_decision(event, color=False)
+        assert "Expires in:" not in result
+
+    # --- Verbose mode ---
+
+    def test_verbose_allow_shows_risk_and_reason(self):
+        event = self._make(decision="allow", risk_level="low", reason="read-only")
+        result = format_decision(event, color=False, verbose=True)
+        nonempty = [ln for ln in result.split("\n") if ln.strip()]
+        assert len(nonempty) >= 2
+        assert "Risk:" in result
+        assert "Reason:" in result
+
+    def test_verbose_allow_shows_tier(self):
+        event = self._make(decision="allow", risk_level="low", actual_tier="L1")
+        result = format_decision(event, color=False, verbose=True)
+        assert "Tier:" in result
+        assert "L1" in result
+
+    # --- no_emoji mode ---
+
+    def test_no_emoji_removes_decision_emoji(self):
+        event = self._make(decision="block", risk_level="high")
+        result = format_decision(event, color=False, no_emoji=True)
+        assert "🚫" not in result
+        assert "BLOCK" in result
+
+    def test_no_emoji_removes_risk_emoji(self):
+        event = self._make(decision="block", risk_level="high")
+        result = format_decision(event, color=False, no_emoji=True)
+        assert "🔴" not in result
+        assert "high" in result
+
+    def test_with_emoji_includes_decision_emoji(self):
+        event = self._make(decision="block", risk_level="high")
+        result = format_decision(event, color=False, no_emoji=False)
+        assert "🚫" in result
+
+    # --- Observation-only events (no command) ---
+
+    def test_empty_command_returns_empty_string(self):
+        event = self._make(command="")
+        result = format_decision(event, color=False)
+        assert result == ""
+
+    def test_none_command_returns_empty_string(self):
+        event = self._make(command=None)
+        result = format_decision(event, color=False)
+        assert result == ""
+
+    # --- Color semantics ---
+
+    def test_block_uses_red_color(self):
+        event = self._make(decision="block", risk_level="high")
+        result = format_decision(event, color=True)
+        assert "\033[91m" in result  # red
+
+    def test_allow_uses_green_color(self):
+        event = self._make(decision="allow", command="ls")
+        result = format_decision(event, color=True)
+        assert "\033[92m" in result  # green
+
+    def test_defer_uses_yellow_color(self):
+        event = self._make(decision="defer", risk_level="high")
+        result = format_decision(event, color=True)
+        assert "\033[93m" in result  # yellow
+
+
+# ---------------------------------------------------------------------------
+# TestFormatAlert  (updated for new tree format)
 # ---------------------------------------------------------------------------
 
 
@@ -112,8 +275,10 @@ class TestFormatAlert:
         }
         result = format_alert(event, color=False)
         assert "ALERT" in result
-        assert "sess=sess-001" in result
-        assert "severity=high" in result
+        # New format: "Session: sess-001" in tree instead of "sess=sess-001"
+        assert "sess-001" in result
+        # New format: "Severity: high" in tree instead of "severity=high"
+        assert "high" in result
         assert "Risk escalation detected" in result
 
     def test_alert_with_color(self):
@@ -126,8 +291,31 @@ class TestFormatAlert:
             "timestamp": "2026-03-22T10:30:45Z",
         }
         result = format_alert(event, color=True)
-        # Alert uses magenta
+        # Alert label uses magenta
         assert "\033[95m" in result
+        assert "ALERT" in result
+
+    def test_alert_has_tree_structure(self):
+        event = {
+            "type": "alert",
+            "severity": "high",
+            "session_id": "sess-001",
+            "message": "Risk up",
+            "timestamp": "2026-03-22T10:30:45Z",
+        }
+        result = format_alert(event, color=False)
+        assert "├─" in result or "└─" in result
+
+    def test_alert_no_emoji(self):
+        event = {
+            "type": "alert",
+            "severity": "high",
+            "session_id": "sess-001",
+            "message": "test",
+            "timestamp": "2026-03-22T10:30:45Z",
+        }
+        result = format_alert(event, color=False, no_emoji=True)
+        assert "⚠️" not in result
         assert "ALERT" in result
 
 
@@ -161,7 +349,8 @@ class TestFormatEvent:
         result = format_event(event, color=False)
         assert "ALERT" in result
 
-    def test_session_start_dispatch(self):
+    def test_session_start_returns_empty(self):
+        """session_start handled by SessionTracker header; format_event returns empty."""
         event = {
             "type": "session_start",
             "session_id": "sess-abc",
@@ -170,8 +359,19 @@ class TestFormatEvent:
             "timestamp": "2026-03-22T10:30:45Z",
         }
         result = format_event(event, color=False)
-        assert "SESSION" in result
-        assert "sess-abc" in result
+        assert result == ""
+
+    def test_session_risk_change_dispatch(self):
+        event = {
+            "type": "session_risk_change",
+            "session_id": "sess-001",
+            "previous_risk": "low",
+            "current_risk": "high",
+            "timestamp": "2026-03-22T10:30:45Z",
+        }
+        result = format_event(event, color=False)
+        assert "RISK" in result
+        assert "sess-001" in result
 
     def test_json_mode_returns_json(self):
         event = {
@@ -186,6 +386,156 @@ class TestFormatEvent:
         assert parsed["type"] == "decision"
         assert parsed["decision"] == "allow"
 
+    def test_verbose_param_forwarded_to_decision(self):
+        event = {
+            "type": "decision",
+            "decision": "allow",
+            "risk_level": "low",
+            "reason": "read-only",
+            "command": "cat file.txt",
+            "timestamp": "2026-03-22T10:30:45Z",
+        }
+        result = format_event(event, color=False, verbose=True)
+        # verbose=True: ALLOW shows details
+        assert "Risk:" in result
+
+    def test_no_emoji_param_forwarded_to_decision(self):
+        event = {
+            "type": "decision",
+            "decision": "block",
+            "risk_level": "high",
+            "command": "rm -rf /",
+            "timestamp": "2026-03-22T10:30:45Z",
+        }
+        result = format_event(event, color=False, no_emoji=True)
+        assert "🚫" not in result
+
+
+# ---------------------------------------------------------------------------
+# TestSessionTracker  (new)
+# ---------------------------------------------------------------------------
+
+
+class TestSessionTracker:
+    def _make_event(self, session_id: str | None, event_type: str = "decision") -> dict:
+        return {
+            "type": event_type,
+            "session_id": session_id,
+            "agent_id": "agent-1",
+            "source_framework": "openclaw",
+            "timestamp": "2026-03-22T10:30:45Z",
+        }
+
+    def test_new_session_returns_header(self):
+        tracker = SessionTracker()
+        event = self._make_event("sess-001")
+        before, after = tracker.update(event, color=False)
+        assert before is not None
+        assert "sess-001" in before
+        assert after is None
+
+    def test_same_session_no_output(self):
+        tracker = SessionTracker()
+        event = self._make_event("sess-001")
+        tracker.update(event, color=False)
+        before, after = tracker.update(event, color=False)
+        assert before is None
+        assert after is None
+
+    def test_session_switch_returns_footer_and_header(self):
+        tracker = SessionTracker()
+        event1 = self._make_event("sess-001")
+        event2 = self._make_event("sess-002")
+        tracker.update(event1, color=False)
+        before, after = tracker.update(event2, color=False)
+        # before contains footer of sess-001 + header of sess-002
+        assert before is not None
+        assert "sess-002" in before
+        assert after is None
+
+    def test_session_switch_before_contains_footer_chars(self):
+        tracker = SessionTracker()
+        tracker.update(self._make_event("sess-001"), color=False)
+        before, _ = tracker.update(self._make_event("sess-002"), color=False)
+        # Footer contains closing box character
+        assert "╰" in before or "===" in before
+
+    def test_no_session_id_no_output(self):
+        tracker = SessionTracker()
+        event = self._make_event(None)
+        before, after = tracker.update(event, color=False)
+        assert before is None
+        assert after is None
+
+    def test_empty_session_id_no_output(self):
+        tracker = SessionTracker()
+        event = self._make_event("")
+        before, after = tracker.update(event, color=False)
+        assert before is None
+        assert after is None
+
+    def test_in_session_true_after_new_session(self):
+        tracker = SessionTracker()
+        assert tracker.in_session is False
+        tracker.update(self._make_event("sess-001"), color=False)
+        assert tracker.in_session is True
+
+    def test_in_session_false_for_no_session_id(self):
+        tracker = SessionTracker()
+        tracker.update(self._make_event(None), color=False)
+        assert tracker.in_session is False
+
+    def test_session_end_returns_footer_after(self):
+        tracker = SessionTracker()
+        tracker.update(self._make_event("sess-001"), color=False)
+        end_event = self._make_event("sess-001", event_type="session_end")
+        before, after = tracker.update(end_event, color=False)
+        assert before is None
+        assert after is not None
+
+    def test_session_end_closes_in_session(self):
+        tracker = SessionTracker()
+        tracker.update(self._make_event("sess-001"), color=False)
+        assert tracker.in_session is True
+        end_event = self._make_event("sess-001", event_type="session_end")
+        tracker.update(end_event, color=False)
+        assert tracker.in_session is False
+
+    def test_compact_header_no_unicode_box(self):
+        tracker = SessionTracker()
+        event = self._make_event("sess-001")
+        before, _ = tracker.update(event, color=False, compact=True)
+        assert "╭" not in before
+        assert "sess-001" in before
+        assert "===" in before
+
+    def test_compact_footer_no_unicode_box(self):
+        tracker = SessionTracker()
+        tracker.update(self._make_event("sess-001"), color=False)
+        before, _ = tracker.update(self._make_event("sess-002"), color=False, compact=True)
+        assert "╰" not in before
+        assert "===" in before
+
+    def test_header_contains_agent_and_framework(self):
+        tracker = SessionTracker()
+        event = {
+            "type": "decision",
+            "session_id": "sess-001",
+            "agent_id": "my-agent",
+            "source_framework": "a3s-code",
+            "timestamp": "2026-03-22T10:30:00Z",
+        }
+        before, _ = tracker.update(event, color=False)
+        assert "my-agent" in before
+        assert "a3s-code" in before
+
+    def test_no_emoji_header_no_session_emoji(self):
+        tracker = SessionTracker()
+        event = self._make_event("sess-001")
+        before, _ = tracker.update(event, color=False, no_emoji=True)
+        assert "📍" not in before
+        assert "sess-001" in before
+
 
 # ---------------------------------------------------------------------------
 # TestWatchCLIParser
@@ -197,7 +547,6 @@ class TestWatchCLIParser:
         from clawsentry.cli.main import _build_parser
 
         parser = _build_parser()
-        # Verify "watch" is a recognized subcommand by parsing it
         args, _ = parser.parse_known_args(["watch"])
         assert args.command == "watch"
 
@@ -233,6 +582,56 @@ class TestWatchCLIParser:
         parser = _build_parser()
         args, _ = parser.parse_known_args(["watch", "-i"])
         assert args.interactive is True
+
+
+# ---------------------------------------------------------------------------
+# TestNewCLIFlags  (new)
+# ---------------------------------------------------------------------------
+
+
+class TestNewCLIFlags:
+    """Tests for --verbose, --no-emoji, --compact flags on watch subcommand."""
+
+    def _parse(self, extra_args: list[str]):
+        from clawsentry.cli.main import _build_parser
+
+        parser = _build_parser()
+        args, _ = parser.parse_known_args(["watch"] + extra_args)
+        return args
+
+    def test_verbose_flag_long(self):
+        args = self._parse(["--verbose"])
+        assert args.verbose is True
+
+    def test_verbose_flag_short(self):
+        args = self._parse(["-v"])
+        assert args.verbose is True
+
+    def test_verbose_default_false(self):
+        args = self._parse([])
+        assert args.verbose is False
+
+    def test_no_emoji_flag(self):
+        args = self._parse(["--no-emoji"])
+        assert args.no_emoji is True
+
+    def test_no_emoji_default_false(self):
+        args = self._parse([])
+        assert args.no_emoji is False
+
+    def test_compact_flag(self):
+        args = self._parse(["--compact"])
+        assert args.compact is True
+
+    def test_compact_default_false(self):
+        args = self._parse([])
+        assert args.compact is False
+
+    def test_all_new_flags_together(self):
+        args = self._parse(["--verbose", "--no-emoji", "--compact"])
+        assert args.verbose is True
+        assert args.no_emoji is True
+        assert args.compact is True
 
 
 # ---------------------------------------------------------------------------

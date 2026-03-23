@@ -119,6 +119,25 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Prompt operator to Allow/Deny/Skip on DEFER decisions.",
     )
+    watch_parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        default=False,
+        help="Show detailed information for all decisions (including ALLOW).",
+    )
+    watch_parser.add_argument(
+        "--no-emoji",
+        action="store_true",
+        default=False,
+        help="Disable emoji (for plain text / narrow terminal environments).",
+    )
+    watch_parser.add_argument(
+        "--compact",
+        action="store_true",
+        default=False,
+        help="Use compact format without Unicode box drawing for session groups.",
+    )
 
     # --- start ---
     start_parser = sub.add_parser(
@@ -208,6 +227,9 @@ def main(argv: list[str] | None = None) -> None:
             json_mode=args.json,
             color=not args.no_color,
             interactive=args.interactive,
+            verbose=args.verbose,
+            no_emoji=args.no_emoji,
+            compact=args.compact,
         )
 
     elif args.command == "start":

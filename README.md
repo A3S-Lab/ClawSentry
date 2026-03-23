@@ -2,7 +2,7 @@
 
 # ClawSentry
 
-[AHP (Agent Harness Protocol)](https://github.com/A3S-Lab/AgentHarnessProtocol) reference implementation — a unified security supervision gateway for AI agent runtimes.
+AHP (Agent Harness Protocol) reference implementation — a unified security supervision gateway for AI agent runtimes.
 
 ## Features
 
@@ -45,7 +45,7 @@ Press Ctrl+C to gracefully shutdown.
 
 ### Manual Step-by-Step
 
-#### [a3s-code](https://github.com/A3S-Lab/Code)
+#### a3s-code
 
 ```bash
 clawsentry init a3s-code --setup   # generate config + patch a3s-code settings
@@ -53,7 +53,7 @@ clawsentry gateway                 # start gateway (default :8080)
 clawsentry watch                   # tail live decisions in your terminal
 ```
 
-#### [OpenClaw](https://github.com/openclaw/openclaw)
+#### OpenClaw
 
 ```bash
 clawsentry init openclaw --setup   # generate config + patch OpenClaw settings
