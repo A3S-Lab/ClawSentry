@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { LayoutDashboard, Users, AlertTriangle, ShieldCheck } from 'lucide-react'
 import StatusBar from './StatusBar'
 import ErrorBoundary from './ErrorBoundary'
@@ -10,13 +10,25 @@ const navItems = [
   { to: '/defer', icon: ShieldCheck, label: 'DEFER Panel' },
 ]
 
+const PAGE_TITLES: Record<string, string> = {
+  '/': 'Dashboard',
+  '/sessions': 'Sessions',
+  '/alerts': 'Alerts',
+  '/defer': 'DEFER Panel',
+}
+
 export default function Layout() {
+  const location = useLocation()
+  const title = Object.entries(PAGE_TITLES)
+    .sort(([a], [b]) => b.length - a.length)
+    .find(([path]) => location.pathname.startsWith(path))?.[1] ?? 'ClawSentry'
+
   return (
     <div className="app-layout">
       <aside className="sidebar">
         <div className="sidebar-header">
-          <h1>CLAWSENTRY</h1>
-          <div className="subtitle">Security Dashboard</div>
+          <div className="sidebar-logo">CLAWSENTRY</div>
+          <div className="subtitle">AHP Security Monitor</div>
         </div>
         <nav className="sidebar-nav">
           {navItems.map(({ to, icon: Icon, label }) => (
@@ -31,16 +43,20 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
+        <div className="sidebar-footer">
+          AHP Protocol v2
+        </div>
       </aside>
       <div className="main-content">
         <div className="topbar">
+          <span className="topbar-title">{title}</span>
           <StatusBar />
         </div>
         <div className="page-content fade-in">
-            <ErrorBoundary>
-              <Outlet />
-            </ErrorBoundary>
-          </div>
+          <ErrorBoundary>
+            <Outlet />
+          </ErrorBoundary>
+        </div>
       </div>
     </div>
   )

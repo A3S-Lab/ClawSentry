@@ -1,15 +1,29 @@
+import type { ReactNode } from 'react'
+
+type AccentColor = 'purple' | 'red' | 'amber' | 'blue' | 'green'
+
 interface MetricCardProps {
   label: string
   value: string | number
-  color?: string
+  accent?: AccentColor
+  icon?: ReactNode
+  subtext?: string
 }
 
-export default function MetricCard({ label, value, color }: MetricCardProps) {
+export default function MetricCard({ label, value, accent = 'purple', icon, subtext }: MetricCardProps) {
   return (
-    <div className="card metric-card">
-      <div className="card-header">{label}</div>
-      <div className="metric-value" style={color ? { color } : undefined}>
-        {value}
+    <div className={`card metric-card accent-${accent}`}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <div className="metric-value">{value}</div>
+          <div className="metric-label">{label}</div>
+          {subtext && <div className="metric-subtext">{subtext}</div>}
+        </div>
+        {icon && (
+          <div style={{ color: 'var(--color-text-muted)', opacity: 0.6 }}>
+            {icon}
+          </div>
+        )}
       </div>
     </div>
   )
