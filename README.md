@@ -25,7 +25,7 @@ Requires Python >= 3.11.
 
 ## Quick Start
 
-### a3s-code
+### [a3s-code](https://github.com/A3S-Lab/Code)
 
 ```bash
 clawsentry init a3s-code --setup   # generate config + patch a3s-code settings
@@ -33,7 +33,7 @@ clawsentry gateway                 # start gateway (default :8765)
 clawsentry watch                   # tail live decisions in your terminal
 ```
 
-### OpenClaw
+### [OpenClaw](https://github.com/openclaw/openclaw)
 
 ```bash
 clawsentry init openclaw --setup   # generate config + patch OpenClaw settings
