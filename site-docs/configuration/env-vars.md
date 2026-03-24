@@ -75,6 +75,82 @@ CS_L3_ENABLED=true       →  L1 + L2 + L3 审查 Agent（完整三层）
 
 ---
 
+## 检测管线调优（DetectionConfig）
+
+`DetectionConfig` 是 ClawSentry 检测管线的统一配置对象，所有参数均可通过 `CS_` 环境变量覆盖，完全向后兼容（默认值与原硬编码一致）。
+
+!!! info "何时需要调整"
+    默认配置适合绝大多数场景。仅在以下情况考虑调整：
+    - 特定业务场景误报/漏报率过高
+    - 需要更激进的注入检测灵敏度
+    - 生产环境中需降低某类检测的资源消耗
+
+### 合成评分权重
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `CS_COMPOSITE_WEIGHT_MAX_D123` | `0.4` | max(D1,D2,D3) 的权重系数 |
+| `CS_COMPOSITE_WEIGHT_D4` | `0.25` | D4 会话累积的权重系数 |
+| `CS_COMPOSITE_WEIGHT_D5` | `0.15` | D5 信任等级的权重系数 |
+| `CS_D6_INJECTION_MULTIPLIER` | `0.5` | D6 注入乘数 X（公式：base × (1.0 + X × D6/3.0)） |
+
+### 风险阈值
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `CS_THRESHOLD_CRITICAL` | `2.2` | composite_score >= 此值 → CRITICAL |
+| `CS_THRESHOLD_HIGH` | `1.5` | composite_score >= 此值 → HIGH |
+| `CS_THRESHOLD_MEDIUM` | `0.8` | composite_score >= 此值 → MEDIUM |
+
+!!! warning "阈值约束"
+    必须满足 `threshold_medium ≤ threshold_high ≤ threshold_critical`，否则启动时自动回退到默认值并记录错误日志。
+
+### D4 会话累积阈值
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `CS_D4_HIGH_THRESHOLD` | `5` | 高危事件数 >= 此值 → D4=2（最高级别） |
+| `CS_D4_MID_THRESHOLD` | `2` | 高危事件数 >= 此值 → D4=1（中等级别） |
+
+### L2 语义分析
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `CS_L2_BUDGET_MS` | `5000` | L2 分析总时间预算（毫秒）。超时自动降级为 L1 结果 |
+| `CS_ATTACK_PATTERNS_PATH` | (内置 25 条) | 自定义攻击模式 YAML 文件路径。设置后覆盖内置模式库 |
+
+### Post-action 分析阈值
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `CS_POST_ACTION_EMERGENCY` | `0.9` | score >= 此值 → EMERGENCY（触发 SSE 广播+紧急告警） |
+| `CS_POST_ACTION_ESCALATE` | `0.6` | score >= 此值 → ESCALATE（上报人工审核） |
+| `CS_POST_ACTION_MONITOR` | `0.3` | score >= 此值 → MONITOR（写入告警日志） |
+| `CS_POST_ACTION_WHITELIST` | (空) | 白名单文件路径正则，逗号分隔。命中则跳过 post-action 分析 |
+
+### 轨迹分析器
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `CS_TRAJECTORY_MAX_EVENTS` | `50` | 每会话保留的最大事件数（滑动窗口容量上限） |
+| `CS_TRAJECTORY_MAX_SESSIONS` | `10000` | 全局最大会话追踪数（超限按 LRU 淘汰最旧会话） |
+
+### 自进化模式库（E-5）
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `CS_EVOLVING_ENABLED` | `false` | 启用自进化模式库。可选值：`true`/`1`/`yes` |
+| `CS_EVOLVED_PATTERNS_PATH` | (空) | 进化模式 YAML 文件存储路径（启用时必须配置） |
+
+!!! example "启用自进化模式库"
+    ```bash
+    CS_EVOLVING_ENABLED=true
+    CS_EVOLVED_PATTERNS_PATH=/var/lib/clawsentry/evolved_patterns.yaml
+    ```
+    启用后，Gateway 会从高风险事件中自动提取候选模式，并通过 `POST /ahp/patterns/confirm` API 接受人工反馈，推动模式从 CANDIDATE → EXPERIMENTAL → STABLE 升级。
+
+---
+
 ## 会话执法
 
 当单个会话累积多次高危决策时，自动触发强制措施。

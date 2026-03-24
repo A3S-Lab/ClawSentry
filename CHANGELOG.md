@@ -12,9 +12,22 @@
 - **攻击模式库**：`attack_patterns.yaml` v1.1，25 条模式覆盖 OWASP ASI01-04（含供应链/容器逃逸/反弹 shell）
 - **EmbeddingBackend Protocol**：可插拔 L3 向量相似度接口（纯 Protocol，无模型依赖）
 - **TrajectoryAnalyzer**：5 个多步攻击序列检测（凭据窃取/后门安装/侦察渗透/密钥收割/分阶段渗出）
-- **DetectionConfig**：统一 frozen dataclass（17 可调字段）+ `build_detection_config_from_env()` + 17 CS_ 环境变量
+- **DetectionConfig**：统一 frozen dataclass（20 可调字段）+ `build_detection_config_from_env()` + 19 CS_ 环境变量（含 bool 型 CS_EVOLVING_ENABLED）
 - L1 评分重构：加权公式 `0.4*max(D1,D2,D3)+0.25*D4+0.15*D5` + D6 乘数，新阈值 LOW<0.8/MED<1.5/HIGH<2.2/CRIT≥2.2
 - SSE 新事件类型：`post_action_finding`、`trajectory_alert`
+
+#### 自进化模式库（E-5，2026-03-24）
+- **PatternEvolutionManager**：从高危事件自动提取候选模式，SHA-256 命令去重，模式 ID `EV-{hash8}`
+- **EvolvedPattern 生命周期**：CANDIDATE → EXPERIMENTAL → STABLE → DEPRECATED（FP 率 >30% 自动废弃）
+- **EvolvedPatternStore**：YAML 原子持久化（tempfile + os.replace），max_patterns=500，LRU 驱逐
+- **compute_confidence()**：5 因子信心评分（确认率 30% / 频率 20% / 跨框架 20% / 准确率 20% / 时效 10%）
+- **双源加载**：`load_patterns(evolved_path=...)` 合并内置 core + evolved，过滤 inactive 模式
+- **REST API**：`GET /ahp/patterns` + `POST /ahp/patterns/confirm`；SSE `pattern_evolved` 事件
+- **配置门控**：`CS_EVOLVING_ENABLED`（默认 false）+ `CS_EVOLVED_PATTERNS_PATH`
+
+#### 测试缺口修复（E-6，2026-03-24）
+- 4 并行 Sonnet subagent 审查 E-4/E-5 全部测试，发现 6C+14H+10M+3L 缺口
+- 10 个测试文件新增 59 个测试：64KB 截断边界、VectorLayer 除零保护、EvolvedPatternStore 驱逐优先级、STABLE 幂等性、compute_confidence 边界、API 400/404 路径、轨迹负面测试、D6/PostAction Gateway 集成等
 
 #### 用户体验改进（E-1~E-3，2026-03-23）
 - **`clawsentry start`**：一键启动命令（框架自动检测 → 初始化 → Gateway → watch），Ctrl+C 优雅关闭
@@ -24,8 +37,9 @@
 - **Web UI 重构**：Linear/Vercel 设计语言，Inter 字体，紫色 accent（#a78bfa），新组件：EmptyState/SkeletonCard/ScoreBar/VerdictBar/AreaChart 渐变/HintTag/LatencyBadge/TierBadge/SVG 环形倒计时
 
 #### 测试覆盖
-- 测试总量：775 → 1138（+363 tests，覆盖 D6/Post-action/模式库/DetectionConfig/TrajectoryAnalyzer）
+- 测试总量：775 → 1239（+464 tests，覆盖 D6/Post-action/模式库/DetectionConfig/TrajectoryAnalyzer/E-5 进化模式/E-6 缺口修复）
 - 1 skipped = E2E SDK 测试（需 `A3S_SDK_E2E=1` + LLM API key，预期行为）
+- E2E 全量测试（含 LLM 调用）：1243 passed（safe/dangerous/alert/eventbus 四项）
 
 ### 修复
 

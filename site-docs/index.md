@@ -120,7 +120,7 @@ graph TB
 
     subgraph Core["ClawSentry 核心"]
         CE["CanonicalEvent<br/>(AHP 统一协议)"]
-        L1["L1 规则引擎<br/>D1-D5 五维评分 · <1ms"]
+        L1["L1 规则引擎<br/>D1-D6 六维评分 · <1ms"]
         L2["L2 语义分析<br/>RuleBased / LLM · <3s"]
         L3["L3 审查 Agent<br/>多轮工具推理 · <30s"]
         PE["PolicyEngine<br/>决策编排"]
@@ -200,7 +200,7 @@ graph TB
 
 | 层级 | 名称 | 延迟 | 机制 | 适用场景 |
 |:---:|:---|:---:|:---|:---|
-| **L1** | 规则引擎 | <1ms | D1-D5 五维评分（命令危险度/参数敏感度/上下文合理性/历史行为/作用域权限） | 明确的黑白名单、已知危险模式 |
+| **L1** | 规则引擎 | <1ms | D1-D6 六维评分（命令危险度/参数敏感度/命令模式/历史行为/作用域权限/注入检测） | 明确的黑白名单、已知危险模式、注入尝试 |
 | **L2** | 语义分析 | <3s | RuleBased / LLM / Composite 三种实现，SemanticAnalyzer 协议 | 需要上下文理解的灰度命令 |
 | **L3** | 审查 Agent | <30s | AgentAnalyzer + ReadOnlyToolkit + SkillRegistry，多轮工具调用推理 | 复杂意图判断、需要取证分析 |
 
@@ -266,6 +266,8 @@ graph TB
 | `/ahp` | POST | OpenClaw Webhook 决策 |
 | `/ahp/a3s` | POST | a3s-code HTTP Transport |
 | `/ahp/resolve` | POST | DEFER 决策代理（allow-once / deny） |
+| `/ahp/patterns` | GET | 查询自进化模式库列表（需 `CS_EVOLVING_ENABLED=true`） |
+| `/ahp/patterns/confirm` | POST | 确认/拒绝进化模式，用于反馈驱动的模式学习 |
 | `/report/summary` | GET | 跨框架聚合统计 |
 | `/report/stream` | GET | SSE 实时推送 |
 | `/report/sessions` | GET | 活跃会话列表 |
@@ -301,8 +303,8 @@ Gateway 在 `/ui` 路径自动挂载静态文件，无需额外配置。
 
 | 指标 | 数据 |
 |:---:|:---:|
-| 测试用例 | **775+** |
-| 测试耗时 | **~6.5s** |
+| 测试用例 | **1239+** |
+| 测试耗时 | **~24s** |
 | 协议版本 | `sync_decision.1.0` |
 | Python 版本 | >= 3.11 |
 | 许可证 | MIT |

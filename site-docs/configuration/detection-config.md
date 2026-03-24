@@ -1,0 +1,313 @@
+---
+title: 检测管线配置参考（DetectionConfig）
+description: 统一调优所有检测参数的 DetectionConfig dataclass — 合成评分权重、风险阈值、D4 会话累积、L2 预算、攻击模式路径、Post-action 分层、轨迹分析、自进化模式库
+---
+
+# 检测管线配置参考（DetectionConfig）
+
+## 概述 {#overview}
+
+`DetectionConfig` 是 ClawSentry 检测管线的统一配置中心，定义于 `src/clawsentry/gateway/detection_config.py`。
+
+它是一个 `@dataclass(frozen=True)` **不可变配置对象**，在 Gateway 启动时创建，此后不可修改。所有可调检测参数都集中在这一个对象中，消除了此前散落在各模块中的硬编码常量。
+
+**设计原则：**
+
+- **完全向后兼容**：所有字段的默认值与原始硬编码常量完全一致，不提供任何 `CS_` 环境变量时行为与旧版本相同。
+- **环境变量驱动**：工厂函数 `build_detection_config_from_env()` 从 `CS_` 前缀环境变量读取覆盖值，适合容器和 12-Factor 部署模式。
+- **整体回退安全**：若环境变量的组合违反验证约束，整体回退至全默认配置，并记录 `ERROR` 日志，而不是以损坏配置启动。
+
+**配置流转路径：**
+
+```
+CS_* 环境变量
+       │
+       ▼
+build_detection_config_from_env()
+       │
+       ▼
+DetectionConfig（frozen dataclass）
+       │
+       ├──▶ risk_snapshot.py       （权重 + 阈值 + D4）
+       ├──▶ policy_engine.py       （L2 预算 + 攻击模式路径）
+       ├──▶ semantic_analyzer.py   （攻击模式路径）
+       ├──▶ post_action_analyzer.py（Post-action 分层阈值 + 白名单）
+       ├──▶ trajectory_analyzer.py （轨迹缓存上限）
+       └──▶ pattern_matcher.py     （攻击模式路径）
+```
+
+---
+
+## 快速开始 {#quickstart}
+
+将下列内容保存为 `.env.clawsentry`（ClawSentry 启动时自动加载），按需取消注释并修改：
+
+```bash title=".env.clawsentry — 检测管线常用调优示例"
+# ── 风险等级阈值（默认值已适合大多数场景）─────────────────────────────────
+# CS_THRESHOLD_MEDIUM=0.8       # >= 此值 → MEDIUM
+# CS_THRESHOLD_HIGH=1.5         # >= 此值 → HIGH
+# CS_THRESHOLD_CRITICAL=2.2     # >= 此值 → CRITICAL
+
+# ── L2 语义分析超时 ────────────────────────────────────────────────────────
+# CS_L2_BUDGET_MS=5000.0        # 默认 5 秒，低延迟场景可调低至 3000
+
+# ── 自定义攻击模式库（热更新，无需重启）────────────────────────────────────
+# CS_ATTACK_PATTERNS_PATH=/etc/clawsentry/attack_patterns.yaml
+
+# ── Post-action 围栏（观察输出时触发告警的阈值）────────────────────────────
+# CS_POST_ACTION_MONITOR=0.3
+# CS_POST_ACTION_ESCALATE=0.6
+# CS_POST_ACTION_EMERGENCY=0.9
+
+# ── Post-action 白名单（逗号分隔正则，命中则跳过检测）─────────────────────
+# CS_POST_ACTION_WHITELIST=^https://internal\.corp\.example\.com,^data:image/
+
+# ── 自进化模式库（E-5，默认关闭）──────────────────────────────────────────
+# CS_EVOLVING_ENABLED=false
+# CS_EVOLVED_PATTERNS_PATH=/var/lib/clawsentry/evolved_patterns.yaml
+```
+
+!!! tip "dotenv 文件位置"
+    ClawSentry 在启动时自动加载当前工作目录下的 `.env.clawsentry` 文件。系统环境变量优先于文件中的值（文件不覆盖已存在的环境变量）。
+
+---
+
+## 完整参数参考 {#reference}
+
+### 合成评分权重 {#scoring-weights}
+
+这组参数控制 L1 风险评分计算中各维度的贡献比例。基础合成评分公式为：
+
+```
+base  = composite_weight_max_d123 × max(D1, D2, D3)
+      + composite_weight_d4       × D4
+      + composite_weight_d5       × D5
+
+composite = base × (1.0 + d6_injection_multiplier × D6 / 3.0)
+```
+
+其中 D1–D3 为工具类型/权限/影响维度，D4 为会话累积，D5 为 Agent 信任级别，D6 为注入检测得分（0.0–3.0 连续值）。
+
+| 字段名 | 类型 | 默认值 | CS_ 变量 | 说明 |
+|--------|------|--------|----------|------|
+| `composite_weight_max_d123` | `float` | `0.4` | `CS_COMPOSITE_WEIGHT_MAX_D123` | max(D1, D2, D3) 的权重，代表最严重的单维度威胁 |
+| `composite_weight_d4` | `float` | `0.25` | `CS_COMPOSITE_WEIGHT_D4` | D4 会话累积风险的权重 |
+| `composite_weight_d5` | `float` | `0.15` | `CS_COMPOSITE_WEIGHT_D5` | D5 Agent 信任级别的权重 |
+| `d6_injection_multiplier` | `float` | `0.5` | `CS_D6_INJECTION_MULTIPLIER` | D6 注入乘数系数 X，公式见上方，X=0 则禁用 D6 影响 |
+
+!!! warning "权重约束"
+    所有权重字段（`composite_weight_max_d123`、`composite_weight_d4`、`composite_weight_d5`、`d6_injection_multiplier`）必须 **>= 0**，否则抛出 `ValueError`。
+
+---
+
+### 风险等级阈值 {#risk-thresholds}
+
+合成评分与这些阈值比较，决定事件的最终风险等级（LOW / MEDIUM / HIGH / CRITICAL）：
+
+| 字段名 | 类型 | 默认值 | CS_ 变量 | 触发条件 |
+|--------|------|--------|----------|----------|
+| `threshold_medium` | `float` | `0.8` | `CS_THRESHOLD_MEDIUM` | `composite >= threshold_medium` → MEDIUM（否则 LOW） |
+| `threshold_high` | `float` | `1.5` | `CS_THRESHOLD_HIGH` | `composite >= threshold_high` → HIGH |
+| `threshold_critical` | `float` | `2.2` | `CS_THRESHOLD_CRITICAL` | `composite >= threshold_critical` → CRITICAL |
+
+**判断逻辑（从高到低依次匹配）：**
+
+```python
+if composite >= threshold_critical:  # 默认 2.2
+    level = "CRITICAL"
+elif composite >= threshold_high:    # 默认 1.5
+    level = "HIGH"
+elif composite >= threshold_medium:  # 默认 0.8
+    level = "MEDIUM"
+else:
+    level = "LOW"
+```
+
+!!! warning "阈值排序约束"
+    必须满足 `threshold_medium ≤ threshold_high ≤ threshold_critical`，否则抛出 `ValueError`。
+
+    **示例**：以下配置会触发 ValueError，因为 medium > high：
+    ```bash
+    CS_THRESHOLD_MEDIUM=2.0
+    CS_THRESHOLD_HIGH=1.0   # 违反约束 → 整体 fallback 到默认值
+    ```
+
+!!! warning "CRITICAL 等级不可达警告"
+    如果 `threshold_critical > 3.0`，由于合成评分的理论最大值约为 3.0（使用默认权重时），CRITICAL 等级在实践中将永远不可达。ClawSentry 会记录一条 `WARNING` 日志，但**不会**抛出错误。
+
+    这通常是配置错误，请检查您的 `CS_THRESHOLD_CRITICAL` 设置。
+
+---
+
+### D4 会话累积阈值 {#d4-thresholds}
+
+D4 维度反映同一会话内高风险事件的累积计数，用于检测持续性攻击模式。
+
+| 字段名 | 类型 | 默认值 | CS_ 变量 | 触发条件 |
+|--------|------|--------|----------|----------|
+| `d4_high_threshold` | `int` | `5` | `CS_D4_HIGH_THRESHOLD` | 累积计数 `>= d4_high_threshold` → D4 = 2（高） |
+| `d4_mid_threshold` | `int` | `2` | `CS_D4_MID_THRESHOLD` | 累积计数 `>= d4_mid_threshold` → D4 = 1（中） |
+
+累积计数低于 `d4_mid_threshold` 时，D4 = 0。
+
+!!! warning "D4 阈值排序约束"
+    必须满足 `d4_mid_threshold ≤ d4_high_threshold`，否则抛出 `ValueError`。
+
+**调优建议：**
+
+- 高安全场景（如生产环境自动化 Agent）：可降低阈值（例如 `d4_mid_threshold=1`，`d4_high_threshold=3`）以更激进地标记重复风险。
+- 开发/测试环境：可适当提高阈值避免频繁误报。
+
+---
+
+### L2 语义分析 {#l2-params}
+
+| 字段名 | 类型 | 默认值 | CS_ 变量 | 说明 |
+|--------|------|--------|----------|------|
+| `l2_budget_ms` | `float` | `5000.0` | `CS_L2_BUDGET_MS` | L2 分析的超时上限（毫秒），超时则跳过 L2 结果，使用 L1 判决 |
+| `attack_patterns_path` | `Optional[str]` | `None` | `CS_ATTACK_PATTERNS_PATH` | 自定义攻击模式 YAML 文件路径；`None` 表示使用内置模式库 |
+
+!!! warning "L2 预算约束"
+    `l2_budget_ms` 必须 **> 0**，否则抛出 `ValueError`。
+
+**`attack_patterns_path` 热更新说明：**
+
+当设置 `CS_ATTACK_PATTERNS_PATH` 指向自定义 YAML 文件时：
+
+- ClawSentry 的 `PatternMatcher` 和 `RuleBasedAnalyzer` 将加载该文件中的模式，**替代**内置模式库。
+- 文件修改后，**重启 Gateway** 即可生效（当前版本不支持运行时热重载）。
+- 格式需与内置 `attack_patterns.yaml` 兼容。
+
+```bash
+# 示例：使用自定义模式库
+CS_ATTACK_PATTERNS_PATH=/etc/clawsentry/my_patterns.yaml
+```
+
+如需在内置模式库基础上**追加**模式（而非替换），请参考 [自进化模式库](#evolving-params) 功能。
+
+---
+
+### Post-action 围栏阈值 {#post-action-params}
+
+Post-action 分析器（`post_action_analyzer.py`）在 Agent 工具调用完成后**异步**检测输出内容，识别间接注入、数据泄露和混淆行为。这是非阻塞分析，不影响主决策链路。
+
+风险评分超过对应阈值时，触发不同响应级别：
+
+| 字段名 | 类型 | 默认值 | CS_ 变量 | 触发级别 |
+|--------|------|--------|----------|----------|
+| `post_action_monitor` | `float` | `0.3` | `CS_POST_ACTION_MONITOR` | `>= post_action_monitor` → MONITOR（记录日志） |
+| `post_action_escalate` | `float` | `0.6` | `CS_POST_ACTION_ESCALATE` | `>= post_action_escalate` → ESCALATE（SSE 告警广播） |
+| `post_action_emergency` | `float` | `0.9` | `CS_POST_ACTION_EMERGENCY` | `>= post_action_emergency` → EMERGENCY（高优先级告警） |
+| `post_action_whitelist` | `Optional[tuple[str, ...]]` | `None` | `CS_POST_ACTION_WHITELIST` | 白名单正则列表，命中则跳过 Post-action 检测 |
+
+!!! warning "Post-action 阈值排序约束"
+    必须满足 `post_action_monitor ≤ post_action_escalate ≤ post_action_emergency`，否则抛出 `ValueError`。
+
+**`CS_POST_ACTION_WHITELIST` 格式：**
+
+逗号分隔的正则表达式列表。工具调用输出内容若匹配任意一条正则，则跳过 Post-action 检测。空字符串和纯空白项自动忽略。
+
+```bash
+# 示例：排除内部域名和 base64 图片数据
+CS_POST_ACTION_WHITELIST=^https://internal\.corp\.example\.com,^data:image/
+```
+
+---
+
+### 轨迹分析器 {#trajectory-params}
+
+轨迹分析器（`trajectory_analyzer.py`）在会话级别缓存工具调用事件序列，检测跨步骤的多阶段攻击模式（如 recon-then-exploit、staged-exfil 等）。
+
+| 字段名 | 类型 | 默认值 | CS_ 变量 | 说明 |
+|--------|------|--------|----------|------|
+| `trajectory_max_events` | `int` | `50` | `CS_TRAJECTORY_MAX_EVENTS` | 每个会话最多缓存的事件数，超出时丢弃最旧事件（滑动窗口） |
+| `trajectory_max_sessions` | `int` | `10000` | `CS_TRAJECTORY_MAX_SESSIONS` | 内存中最多保留的会话数，超出时 LRU 驱逐最久未活跃的会话 |
+
+**内存估算参考：**
+
+- 每条缓存事件约占 1–2 KB 内存（含工具名、参数摘要等元数据）。
+- 默认配置（50 事件 × 10000 会话）理论上限约为 **500 MB**，实际远低于此（大多数会话事件数远少于上限）。
+- 高并发场景可适当降低 `CS_TRAJECTORY_MAX_SESSIONS`；长会话场景可适当提高 `CS_TRAJECTORY_MAX_EVENTS`。
+
+---
+
+### 自进化模式库 {#evolving-params}
+
+E-5 自进化功能允许 ClawSentry 在运行过程中积累新发现的攻击模式候选，通过人工或自动确认后提升为活跃检测规则。
+
+| 字段名 | 类型 | 默认值 | CS_ 变量 | 说明 |
+|--------|------|--------|----------|------|
+| `evolving_enabled` | `bool` | `False` | `CS_EVOLVING_ENABLED` | 是否启用自进化模式库功能 |
+| `evolved_patterns_path` | `Optional[str]` | `None` | `CS_EVOLVED_PATTERNS_PATH` | 自进化模式 YAML 的持久化存储路径 |
+
+**`CS_EVOLVING_ENABLED` 布尔值解析规则：**
+
+| 环境变量值 | 解析结果 |
+|-----------|----------|
+| `1`、`true`、`yes`（不区分大小写） | `True` |
+| `0`、`false`、`no`（不区分大小写） | `False` |
+| 其他或未设置 | 使用默认值 `False` |
+
+**启用示例：**
+
+```bash
+# 启用自进化模式库，并指定持久化路径
+CS_EVOLVING_ENABLED=true
+CS_EVOLVED_PATTERNS_PATH=/var/lib/clawsentry/evolved_patterns.yaml
+```
+
+!!! note "evolved_patterns_path 与 attack_patterns_path 的关系"
+    - `CS_ATTACK_PATTERNS_PATH`：指定**核心**攻击模式库（替代内置 YAML），影响 L2 分析。
+    - `CS_EVOLVED_PATTERNS_PATH`：指定**自进化**模式的持久化文件，在核心模式库基础上**追加**检测规则。
+    - 两者可同时使用，最终有效模式集 = 核心模式 + 状态为 `experimental` 或 `stable` 的自进化模式。
+
+---
+
+## 验证约束 {#validation}
+
+`DetectionConfig` 在 `__post_init__` 中执行以下验证。违反时的行为分为两类：
+
+### 直接抛出 ValueError
+
+下列约束违反时，`DetectionConfig` 构造函数立即抛出 `ValueError`：
+
+| 约束 | 错误条件 |
+|------|----------|
+| 阈值排序 | `threshold_medium > threshold_high` 或 `threshold_high > threshold_critical` |
+| D4 阈值排序 | `d4_mid_threshold > d4_high_threshold` |
+| 权重非负 | `composite_weight_max_d123 < 0` 或 `composite_weight_d4 < 0` 或 `composite_weight_d5 < 0` 或 `d6_injection_multiplier < 0` |
+| L2 预算正数 | `l2_budget_ms <= 0` |
+| Post-action 阈值排序 | `post_action_monitor > post_action_escalate` 或 `post_action_escalate > post_action_emergency` |
+
+### 记录 Warning 日志（不抛出错误）
+
+| 条件 | 警告内容 |
+|------|----------|
+| `threshold_critical > 3.0` | "CRITICAL level may be unreachable"（CRITICAL 等级在实践中可能永远不可达） |
+
+### 环境变量整体回退机制
+
+当通过 `build_detection_config_from_env()` 从环境变量构建配置时：
+
+- **单个变量解析失败**（如类型不匹配）：静默忽略该变量，使用该字段的默认值，记录 `WARNING` 日志。
+- **组合后违反验证约束**（如阈值排序错误）：**整体回退**到 `DetectionConfig()`（全默认值），记录 `ERROR` 日志。
+
+```
+[ERROR] CS_ env vars produce invalid DetectionConfig (<错误原因>); falling back to defaults
+```
+
+这意味着配置错误**不会**导致 Gateway 启动失败，而是以安全的默认配置运行。如果观察到此日志，请检查 `CS_` 环境变量的值和组合是否满足验证约束。
+
+---
+
+## 代码位置 {#code-locations}
+
+| 文件 | 使用的配置字段 |
+|------|----------------|
+| `src/clawsentry/gateway/detection_config.py` | `DetectionConfig` dataclass 定义 + `build_detection_config_from_env()` 工厂函数 |
+| `src/clawsentry/gateway/risk_snapshot.py` | `composite_weight_*`、`threshold_*`、`d4_*` |
+| `src/clawsentry/gateway/policy_engine.py` | `l2_budget_ms`、`attack_patterns_path` |
+| `src/clawsentry/gateway/semantic_analyzer.py` | `attack_patterns_path` |
+| `src/clawsentry/gateway/post_action_analyzer.py` | `post_action_*`（阈值和白名单） |
+| `src/clawsentry/gateway/trajectory_analyzer.py` | `trajectory_max_events`、`trajectory_max_sessions` |
+| `src/clawsentry/gateway/pattern_matcher.py` | `attack_patterns_path` |
