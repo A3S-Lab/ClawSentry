@@ -170,8 +170,8 @@ class TestGatewayCore:
                 "agent_id": "agent-001",
                 "source_framework": "test",
                 "occurred_at": "2026-03-19T12:00:00+00:00",
-                "payload": {"path": "/home/user/project/app.py"},
-                "tool_name": "write_file",
+                "payload": {"url": "https://example.com"},
+                "tool_name": "http_request",
                 "risk_hints": ["credential_exfiltration"],
             },
         )

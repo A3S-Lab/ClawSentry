@@ -70,8 +70,8 @@ class TestE2ESafeCommand:
     async def test_safe_ls_command_allow(self, gateway_and_adapter):
         """Safe ls command in bash from a trusted agent should be allowed.
 
-        Note: bash (D1=2) + untrusted (D5=2) = score 4 -> HIGH -> block.
-        With standard trust (D5=1): score = 2+0+1 = 3 -> medium -> allow.
+        Note: bash (D1=2) + untrusted (D5=2) → score=1.1 → MEDIUM → allow.
+        With standard trust (D5=1): score=0.95 → MEDIUM → allow.
         """
         gw, adapter = gateway_and_adapter
 

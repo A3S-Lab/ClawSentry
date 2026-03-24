@@ -52,6 +52,8 @@ from .models import (
     utc_now_iso,
 )
 from .policy_engine import L1PolicyEngine
+from .post_action_analyzer import PostActionAnalyzer
+from .trajectory_analyzer import TrajectoryAnalyzer
 from .session_enforcement import (
     EnforcementAction,
     SessionEnforcementPolicy,
@@ -845,7 +847,7 @@ class EventBus:
             "queue": queue,
             "session_id": session_id,
             "min_risk": min_risk,
-            "event_types": event_types or {"decision", "session_risk_change", "session_start", "session_enforcement_change"},
+            "event_types": event_types or {"decision", "session_risk_change", "session_start", "session_enforcement_change", "post_action_finding", "trajectory_alert"},
         }
         return subscriber_id, queue
 
@@ -997,6 +999,8 @@ class SupervisionGateway:
         self.event_bus = EventBus()
         self.alert_registry = AlertRegistry()
         self.session_enforcement = session_enforcement or SessionEnforcementPolicy()
+        self.post_action_analyzer = PostActionAnalyzer()
+        self.trajectory_analyzer = TrajectoryAnalyzer()
         self._start_time = time.monotonic()
         self._ready = True
 
@@ -1172,6 +1176,31 @@ class SupervisionGateway:
             meta=meta_dict,
         )
 
+        # --- E-4 Phase 2: Trajectory analysis ---
+        try:
+            traj_event = {
+                "session_id": _sid,
+                "event_id": req.event.event_id,
+                "tool_name": req.event.tool_name or "",
+                "occurred_at_ts": self.session_registry._parse_iso_timestamp(
+                    str(event_dict.get("occurred_at") or "")
+                ),
+                "payload": req.event.payload or {},
+            }
+            traj_matches = self.trajectory_analyzer.record(traj_event)
+            for tm in traj_matches:
+                self.event_bus.broadcast({
+                    "type": "trajectory_alert",
+                    "session_id": _sid,
+                    "sequence_id": tm.sequence_id,
+                    "risk_level": tm.risk_level,
+                    "matched_event_ids": tm.matched_event_ids,
+                    "reason": tm.reason,
+                    "timestamp": str(event_dict.get("occurred_at") or utc_now_iso()),
+                })
+        except Exception:
+            logger.exception("trajectory analysis failed for event %s", req.event.event_id)
+
         # --- A-7: Check if threshold is newly breached ---
         session_id = str(event_dict.get("session_id") or "")
         if session_id and self.session_enforcement.enabled:
@@ -1284,6 +1313,33 @@ class SupervisionGateway:
                     "timestamp": occurred_at,
                 }
             )
+
+        # --- E-4: Post-action security analysis ---
+        if req.event.event_type == EventType.POST_ACTION:
+            try:
+                output_text = str(
+                    req.event.payload.get("output", "")
+                    or req.event.payload.get("result", "")
+                    or ""
+                )
+                if output_text:
+                    finding = self.post_action_analyzer.analyze(
+                        tool_output=output_text,
+                        tool_name=req.event.tool_name or "unknown",
+                        event_id=req.event.event_id,
+                    )
+                    if finding.tier.value != "log_only":
+                        self.event_bus.broadcast({
+                            "type": "post_action_finding",
+                            "event_id": req.event.event_id,
+                            "session_id": session_id,
+                            "tier": finding.tier.value,
+                            "patterns_matched": finding.patterns_matched,
+                            "score": finding.score,
+                            "timestamp": occurred_at,
+                        })
+            except Exception:
+                logger.exception("post-action analysis failed for event %s", req.event.event_id)
 
         return self._jsonrpc_success(rpc_id, resp_dict)
 

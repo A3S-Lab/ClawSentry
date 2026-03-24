@@ -39,10 +39,10 @@ from .semantic_analyzer import (
 )
 
 _MIN_SCORE_FOR_LEVEL = {
-    RiskLevel.LOW: 0,
-    RiskLevel.MEDIUM: 2,
-    RiskLevel.HIGH: 4,
-    RiskLevel.CRITICAL: 5,
+    RiskLevel.LOW: 0.0,
+    RiskLevel.MEDIUM: 0.8,
+    RiskLevel.HIGH: 1.5,
+    RiskLevel.CRITICAL: 2.2,
 }
 
 class L1PolicyEngine:
@@ -204,7 +204,7 @@ class L1PolicyEngine:
         parts = [base]
         dims = snapshot.dimensions
         parts.append(
-            f"D1={dims.d1} D2={dims.d2} D3={dims.d3} D4={dims.d4} D5={dims.d5}"
+            f"D1={dims.d1} D2={dims.d2} D3={dims.d3} D4={dims.d4} D5={dims.d5} D6={dims.d6:.1f}"
         )
         parts.append(f"score={snapshot.composite_score}")
         if snapshot.short_circuit_rule:

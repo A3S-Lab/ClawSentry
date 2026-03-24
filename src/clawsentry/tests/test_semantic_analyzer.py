@@ -200,11 +200,11 @@ class TestPolicyEngineIntegration:
 
         engine = L1PolicyEngine(analyzer=StubAnalyzer())
         evt = _evt(
-            tool_name="write_file",
-            payload={"path": "/home/user/app.py"},
+            tool_name="http_request",
+            payload={"url": "https://example.com"},
             risk_hints=["credential_exfiltration"],
         )
-        # This event is medium L1, triggers auto-escalation to L2
+        # This event is MEDIUM L1, triggers auto-escalation to L2
         decision, snapshot, tier = engine.evaluate(evt, _ctx(AgentTrustLevel.STANDARD))
         assert tier.value == "L2"
         assert snapshot.risk_level == RiskLevel.CRITICAL
@@ -214,8 +214,8 @@ class TestPolicyEngineIntegration:
         """L1PolicyEngine() with no args behaves identically to before."""
         engine = L1PolicyEngine()
         evt = _evt(
-            tool_name="write_file",
-            payload={"path": "/home/user/project/app.py"},
+            tool_name="http_request",
+            payload={"url": "https://example.com"},
             risk_hints=["credential_exfiltration"],
         )
         decision, snapshot, tier = engine.evaluate(evt, _ctx(AgentTrustLevel.STANDARD))

@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from clawsentry.gateway.models import (
     CanonicalEvent,
     CanonicalDecision,
+    CanaryToken,
     RiskSnapshot,
     RiskDimensions,
     SyncDecisionRequest,
@@ -25,6 +26,8 @@ from clawsentry.gateway.models import (
     RPCErrorCode,
     ClassifiedBy,
     AgentTrustLevel,
+    PostActionResponseTier,
+    PostActionFinding,
     CURRENT_SCHEMA_VERSION,
     RPC_VERSION,
     utc_now_iso,
@@ -298,17 +301,26 @@ class TestRiskSnapshot:
         assert rs.l1_snapshot is not None
         assert rs.l1_snapshot.classified_by == ClassifiedBy.L1
 
-    def test_composite_score_out_of_bounds(self):
+    def test_composite_score_negative_rejected(self):
         with pytest.raises(ValidationError):
-            RiskSnapshot(**_minimal_risk_snapshot(composite_score=8))
+            RiskSnapshot(**_minimal_risk_snapshot(composite_score=-1))
 
-    def test_composite_score_max_valid(self):
+    def test_composite_score_float_accepted(self):
         rs = RiskSnapshot(**_minimal_risk_snapshot(
-            composite_score=7,
+            composite_score=8.5,
             risk_level="critical",
-            dimensions={"d1": 3, "d2": 3, "d3": 3, "d4": 2, "d5": 2},
+            dimensions={"d1": 3, "d2": 3, "d3": 3, "d4": 2, "d5": 2, "d6": 2.5},
         ))
-        assert rs.composite_score == 7
+        assert rs.composite_score == 8.5
+
+    def test_composite_score_above_7_valid(self):
+        """composite_score can exceed 7 when D6 multiplier is applied."""
+        rs = RiskSnapshot(**_minimal_risk_snapshot(
+            composite_score=10,
+            risk_level="critical",
+            dimensions={"d1": 3, "d2": 3, "d3": 3, "d4": 2, "d5": 2, "d6": 3.0},
+        ))
+        assert rs.composite_score == 10
 
 
 # ===========================================================================
@@ -485,6 +497,133 @@ class TestRiskSnapshotL3Trace:
         dumped = snap.model_dump(mode="json")
         assert "l3_trace" not in dumped
 
+
+# ===========================================================================
+# RiskDimensions D6 Tests
+# ===========================================================================
+
+class TestRiskDimensionsD6:
+    def test_d6_defaults_to_zero(self):
+        dims = RiskDimensions(d1=0, d2=0, d3=0, d4=0, d5=0)
+        assert dims.d6 == 0.0
+
+    def test_d6_accepts_float(self):
+        dims = RiskDimensions(d1=0, d2=0, d3=0, d4=0, d5=0, d6=1.5)
+        assert dims.d6 == 1.5
+
+    def test_d6_max_valid(self):
+        dims = RiskDimensions(d1=0, d2=0, d3=0, d4=0, d5=0, d6=3.0)
+        assert dims.d6 == 3.0
+
+    def test_d6_exceeds_max_rejected(self):
+        with pytest.raises(ValidationError):
+            RiskDimensions(d1=0, d2=0, d3=0, d4=0, d5=0, d6=3.1)
+
+    def test_d6_negative_rejected(self):
+        with pytest.raises(ValidationError):
+            RiskDimensions(d1=0, d2=0, d3=0, d4=0, d5=0, d6=-0.1)
+
+
+# ===========================================================================
+# CanaryToken Tests
+# ===========================================================================
+
+class TestCanaryToken:
+    def test_generate_format(self):
+        ct = CanaryToken.generate()
+        assert ct.token.startswith("<!-- ahp-ref:")
+        assert ct.token.endswith(" -->")
+        # Core hex part should be 16 chars
+        core = ct.token.replace("<!-- ahp-ref:", "").replace(" -->", "")
+        assert len(core) == 16
+        assert ct.injected_at > 0
+
+    def test_generate_unique(self):
+        ct1 = CanaryToken.generate()
+        ct2 = CanaryToken.generate()
+        assert ct1.token != ct2.token
+
+    def test_check_leak_full_match(self):
+        ct = CanaryToken(token="<!-- ahp-ref:abc123def456ghij -->", injected_at=0.0)
+        text = "Some output containing <!-- ahp-ref:abc123def456ghij --> in response"
+        assert ct.check_leak(text) == 1.5
+
+    def test_check_leak_core_match(self):
+        ct = CanaryToken(token="<!-- ahp-ref:abc123def456ghij -->", injected_at=0.0)
+        text = "Leaked ahp-ref:abc123def456ghij somewhere"
+        assert ct.check_leak(text) == 1.0
+
+    def test_check_leak_no_match(self):
+        ct = CanaryToken(token="<!-- ahp-ref:abc123def456ghij -->", injected_at=0.0)
+        text = "Clean output with no canary tokens"
+        assert ct.check_leak(text) == 0.0
+
+
+# ===========================================================================
+# PostAction Types Tests
+# ===========================================================================
+
+class TestPostActionResponseTier:
+    def test_enum_values(self):
+        assert PostActionResponseTier.LOG_ONLY.value == "log_only"
+        assert PostActionResponseTier.MONITOR.value == "monitor"
+        assert PostActionResponseTier.ESCALATE.value == "escalate"
+        assert PostActionResponseTier.EMERGENCY.value == "emergency"
+
+    def test_all_tiers_count(self):
+        assert len(PostActionResponseTier) == 4
+
+
+class TestPostActionFinding:
+    def test_creation_minimal(self):
+        finding = PostActionFinding(
+            tier=PostActionResponseTier.LOG_ONLY,
+            patterns_matched=["test-pattern"],
+            score=0.5,
+        )
+        assert finding.tier == PostActionResponseTier.LOG_ONLY
+        assert finding.patterns_matched == ["test-pattern"]
+        assert finding.score == 0.5
+        assert finding.details == {}  # __post_init__ sets empty dict
+
+    def test_creation_with_details(self):
+        finding = PostActionFinding(
+            tier=PostActionResponseTier.EMERGENCY,
+            patterns_matched=["exfil-http", "exfil-dns"],
+            score=2.8,
+            details={"exfil_target": "https://evil.com"},
+        )
+        assert finding.details == {"exfil_target": "https://evil.com"}
+
+    def test_to_dict(self):
+        finding = PostActionFinding(
+            tier=PostActionResponseTier.ESCALATE,
+            patterns_matched=["multi-step-attack"],
+            score=1.5,
+            details={"chain": ["read .env", "curl"]},
+        )
+        d = finding.to_dict()
+        assert d == {
+            "tier": "escalate",
+            "patterns_matched": ["multi-step-attack"],
+            "score": 1.5,
+            "details": {"chain": ["read .env", "curl"]},
+        }
+
+    def test_to_dict_empty_details(self):
+        finding = PostActionFinding(
+            tier=PostActionResponseTier.MONITOR,
+            patterns_matched=[],
+            score=0.0,
+        )
+        d = finding.to_dict()
+        assert d["details"] == {}
+        assert d["tier"] == "monitor"
+
+
+# ===========================================================================
+# Utility Tests
+# ===========================================================================
 
 class TestUtilities:
     def test_utc_now_iso(self):

@@ -1,0 +1,573 @@
+# ==========================================================================
+# ClawSentry Attack Pattern Library v1.0
+#
+# Design basis: docs/plans/2026-03-23-e4-phase1-design-v1.2.md section 4
+# Coverage: OWASP Agentic AI Top 5 (ASI01, ASI02, ASI03, ASI05)
+#
+# Each pattern has:
+#   - triggers: tool/file/command conditions (AND/OR boolean logic)
+#   - detection: regex patterns with weight scores
+#   - false_positive_filters: whitelist paths to suppress known-safe matches
+#   - risk_escalation: optional level override
+#   - references: related incidents/papers
+#   - mitre_attack: MITRE ATT&CK mapping
+# ==========================================================================
+
+version: "1.1"
+
+patterns:
+  # =========================================================================
+  # ASI01: Prompt Injection / Goal Hijack (3 patterns)
+  # =========================================================================
+
+  - id: "ASI01-001"
+    category: "goal_hijack"
+    description: "README/Markdown injection — hidden override instructions in documents"
+    risk_level: "high"
+    triggers:
+      logic: "AND"
+      conditions:
+        - tool_names: ["read_file", "read", "cat"]
+        - OR:
+            - file_extensions: [".md", ".txt", ".rst"]
+            - file_patterns: ["README*", "CONTRIBUTING*", "INSTALL*"]
+    detection:
+      regex_patterns:
+        - pattern: "ignore.*(?:previous|prior|above).*(?:instruction|prompt|context)"
+          weight: 10
+        - pattern: "(?:you must|you should|you are).*(?:execute|run|download|install)"
+          weight: 8
+        - pattern: "(?:new instructions|system prompt|override).*(?:follow|obey|execute)"
+          weight: 9
+    false_positive_filters:
+      - type: "whitelist_path"
+        paths: ["/tmp/test_*", "*/node_modules/*", "*/test_fixtures/*"]
+    risk_escalation:
+      from: "medium"
+      to: "high"
+    references:
+      incidents: ["OpenHands-Lethal-Trifecta", "CVE-2025-59536"]
+      papers: ["InjecAgent-2024", "AgentDojo-2024"]
+    mitre_attack:
+      tactics: ["TA0009"]
+      techniques: ["T1059"]
+
+  - id: "ASI01-002"
+    category: "goal_hijack"
+    description: "HTML comment injection — hidden instructions in HTML/XML comments"
+    risk_level: "high"
+    triggers:
+      tool_names: ["read_file", "read", "cat", "http_request", "web_fetch"]
+    detection:
+      regex_patterns:
+        - pattern: "<!--.*?(?:ignore|disregard|override|system|instruction).*?-->"
+          weight: 10
+        - pattern: "<!--[^>]*(?:you must|execute|admin|sudo)[^>]*-->"
+          weight: 9
+    false_positive_filters:
+      - type: "whitelist_path"
+        paths: ["*/test_*", "*/fixtures/*"]
+    references:
+      papers: ["AgentDojo-2024"]
+    mitre_attack:
+      tactics: ["TA0009"]
+      techniques: ["T1059.006"]
+
+  - id: "ASI01-003"
+    category: "goal_hijack"
+    description: "Zero-width character injection — hidden content via Unicode control characters"
+    risk_level: "high"
+    triggers:
+      tool_names: ["read_file", "read", "cat", "http_request", "web_fetch"]
+    detection:
+      regex_patterns:
+        - pattern: "\\u200b|\\u200c|\\u200d|\\ufeff"
+          weight: 8
+        - pattern: "\\u2060|\\u2061|\\u2062|\\u2063"
+          weight: 7
+    references:
+      papers: ["AgentSecurityBench-2024"]
+    mitre_attack:
+      tactics: ["TA0005"]
+      techniques: ["T1027"]
+
+  # =========================================================================
+  # ASI02: Tool Misuse / Data Exfiltration (3 patterns)
+  # =========================================================================
+
+  - id: "ASI02-001"
+    category: "tool_misuse"
+    description: "HTTP data exfiltration — curl/wget uploading sensitive data to external endpoints"
+    risk_level: "critical"
+    triggers:
+      tool_names: ["bash", "shell", "exec"]
+    detection:
+      regex_patterns:
+        - pattern: "curl.*-d.*@"
+          weight: 10
+        - pattern: "wget.*--post-data"
+          weight: 10
+        - pattern: "curl.*--upload-file"
+          weight: 8
+        - pattern: "curl.*-F.*file=@"
+          weight: 9
+    false_positive_filters:
+      - type: "whitelist_path"
+        paths: ["*/test_*", "*/ci/*"]
+    references:
+      incidents: ["OpenHands-Lethal-Trifecta"]
+    mitre_attack:
+      tactics: ["TA0010"]
+      techniques: ["T1048"]
+
+  - id: "ASI02-002"
+    category: "tool_misuse"
+    description: "Lethal Trifecta — read credential file then make network request"
+    risk_level: "critical"
+    triggers:
+      tool_names: ["bash", "shell", "exec", "http_request"]
+    detection:
+      regex_patterns:
+        - pattern: "(?:cat|less|head|tail).*(?:\\.env|\\.pem|\\.key|id_rsa|credentials).*(?:curl|wget|http)"
+          weight: 10
+        - pattern: "(?:curl|wget).*\\$\\(cat.*(?:\\.env|\\.pem|\\.key)\\)"
+          weight: 10
+    references:
+      incidents: ["OpenHands-Lethal-Trifecta"]
+      papers: ["InjecAgent-2024"]
+    mitre_attack:
+      tactics: ["TA0010", "TA0006"]
+      techniques: ["T1552", "T1048"]
+
+  - id: "ASI02-003"
+    category: "tool_misuse"
+    description: "DNS tunnel exfiltration — data encoded in DNS queries for covert data theft"
+    risk_level: "critical"
+    triggers:
+      tool_names: ["bash", "shell", "exec"]
+    detection:
+      regex_patterns:
+        - pattern: "nslookup.*\\$\\{"
+          weight: 10
+        - pattern: "dig.*\\$\\{"
+          weight: 10
+        - pattern: "nslookup.*\\$\\("
+          weight: 9
+        - pattern: "dig.*\\$\\("
+          weight: 9
+    references:
+      papers: ["AgentSecurityBench-2024"]
+    mitre_attack:
+      tactics: ["TA0010"]
+      techniques: ["T1071.004"]
+
+  # =========================================================================
+  # ASI03: Privilege Abuse (2 patterns)
+  # =========================================================================
+
+  - id: "ASI03-001"
+    category: "privilege_abuse"
+    description: "Path traversal — accessing files outside the intended workspace boundary"
+    risk_level: "high"
+    triggers:
+      tool_names: ["read_file", "write_file", "edit_file", "read", "write", "edit"]
+    detection:
+      regex_patterns:
+        - pattern: "\\.\\./\\.\\./\\.\\."
+          weight: 8
+        - pattern: "/etc/(?:passwd|shadow|hosts|sudoers)"
+          weight: 10
+        - pattern: "/root/\\.(?:ssh|bash_history|gnupg)"
+          weight: 10
+    false_positive_filters:
+      - type: "whitelist_path"
+        paths: ["*/test_*", "*/fixtures/*", "*/mock_*"]
+    references:
+      incidents: ["Cursor-IDE-Path-Traversal"]
+    mitre_attack:
+      tactics: ["TA0007"]
+      techniques: ["T1083"]
+
+  - id: "ASI03-002"
+    category: "privilege_abuse"
+    description: "Sudo / privilege escalation abuse — unauthorized elevated operations"
+    risk_level: "critical"
+    triggers:
+      tool_names: ["bash", "shell", "exec"]
+    detection:
+      regex_patterns:
+        - pattern: "sudo.*(?:chmod|chown|rm|mv|cp).*(?:/etc|/usr|/var)"
+          weight: 10
+        - pattern: "sudo.*(?:apt|yum|dnf|pip).*install"
+          weight: 7
+    mitre_attack:
+      tactics: ["TA0004"]
+      techniques: ["T1548"]
+
+  # =========================================================================
+  # ASI05: Arbitrary Code Execution (2 patterns)
+  # =========================================================================
+
+  - id: "ASI05-001"
+    category: "code_execution"
+    description: "Shell injection — piping remote content directly to a shell interpreter"
+    risk_level: "critical"
+    triggers:
+      tool_names: ["bash", "shell", "exec"]
+    detection:
+      regex_patterns:
+        - pattern: "(?:curl|wget).*\\|.*(?:bash|sh|python|perl|ruby)"
+          weight: 10
+        - pattern: "(?:curl|wget).*-o.*&&.*(?:bash|sh|chmod)"
+          weight: 9
+    references:
+      incidents: ["Supply-Chain-Attack-2024"]
+    mitre_attack:
+      tactics: ["TA0002"]
+      techniques: ["T1059.004"]
+
+  - id: "ASI05-002"
+    category: "code_execution"
+    description: "Base64 obfuscated execution — hidden payload decoded and executed at runtime"
+    risk_level: "high"
+    triggers:
+      tool_names: ["bash", "shell", "exec"]
+    detection:
+      regex_patterns:
+        - pattern: "base64.*-d.*\\|.*(?:bash|sh|python)"
+          weight: 10
+        - pattern: "echo.*\\|.*base64.*-d.*\\|.*(?:bash|sh)"
+          weight: 10
+        - pattern: "python.*-c.*import.*base64.*exec"
+          weight: 9
+    mitre_attack:
+      tactics: ["TA0005"]
+      techniques: ["T1027", "T1059"]
+
+  # =========================================================================
+  # ASI01: Prompt Injection / Goal Hijack — continued (2 new)
+  # =========================================================================
+
+  - id: "ASI01-004"
+    category: "goal_hijack"
+    description: "Template injection — Jinja2/ERB/EJS template markers in file content"
+    risk_level: "high"
+    triggers:
+      tool_names: ["read_file", "read", "cat", "http_request", "web_fetch"]
+    detection:
+      regex_patterns:
+        - pattern: "\\{\\{.*?(?:__class__|__globals__|__import__|popen|system).*?\\}\\}"
+          weight: 10
+        - pattern: "<%=?.*?(?:system|exec|popen|eval|require).*?%>"
+          weight: 10
+        - pattern: "\\$\\{.*?(?:Runtime|ProcessBuilder|exec).*?\\}"
+          weight: 9
+    references:
+      papers: ["SSTI-Research-2024"]
+    mitre_attack:
+      tactics: ["TA0009"]
+      techniques: ["T1059"]
+
+  - id: "ASI01-005"
+    category: "goal_hijack"
+    description: "Markdown image tag data exfiltration — tracking pixels with query parameters"
+    risk_level: "high"
+    triggers:
+      tool_names: ["read_file", "read", "cat"]
+      file_extensions: [".md", ".txt", ".rst", ".html"]
+    detection:
+      regex_patterns:
+        - pattern: "!\\[.*?\\]\\(https?://(?!github\\.com|githubusercontent\\.com|shields\\.io).*?\\?.*?(?:data|token|secret|key|password|api).*?\\)"
+          weight: 10
+        - pattern: "<img[^>]+src=['\"]https?://[^'\"]+\\?[^'\"]*(?:data|token|secret).*?['\"]"
+          weight: 9
+    mitre_attack:
+      tactics: ["TA0010"]
+      techniques: ["T1567"]
+
+  # =========================================================================
+  # ASI02: Tool Misuse / Data Exfiltration — continued (4 new)
+  # =========================================================================
+
+  - id: "ASI02-004"
+    category: "tool_misuse"
+    description: "Reverse shell — establishing interactive remote shell connections"
+    risk_level: "critical"
+    triggers:
+      tool_names: ["bash", "shell", "exec"]
+    detection:
+      regex_patterns:
+        - pattern: "bash\\s+-i\\s+>&\\s+/dev/tcp/"
+          weight: 10
+        - pattern: "nc\\s+.*-e\\s+/bin/(ba)?sh"
+          weight: 10
+        - pattern: "python.*socket.*connect.*subprocess"
+          weight: 9
+        - pattern: "mkfifo.*nc.*\\d+\\.\\d+\\.\\d+\\.\\d+"
+          weight: 9
+        - pattern: "socat.*EXEC.*PTY.*tcp-connect"
+          weight: 9
+    references:
+      papers: ["MITRE-T1059-2024"]
+    mitre_attack:
+      tactics: ["TA0011"]
+      techniques: ["T1059.004"]
+
+  - id: "ASI02-005"
+    category: "tool_misuse"
+    description: "ICMP tunnel exfiltration — data encoded in ping payloads"
+    risk_level: "critical"
+    triggers:
+      tool_names: ["bash", "shell", "exec"]
+    detection:
+      regex_patterns:
+        - pattern: "ping\\s+.*-p\\s+[0-9a-fA-F]{32,}"
+          weight: 10
+        - pattern: "ping\\s+.*-c\\s+\\d+.*-p\\s+[0-9a-fA-F]+"
+          weight: 8
+    mitre_attack:
+      tactics: ["TA0010"]
+      techniques: ["T1048.003"]
+
+  - id: "ASI02-006"
+    category: "tool_misuse"
+    description: "Cloud storage exfiltration — uploading data to cloud buckets"
+    risk_level: "critical"
+    triggers:
+      tool_names: ["bash", "shell", "exec"]
+    detection:
+      regex_patterns:
+        - pattern: "aws\\s+s3\\s+(?:cp|mv|sync)\\s+.*s3://"
+          weight: 10
+        - pattern: "gsutil\\s+(?:cp|mv|rsync)\\s+.*gs://"
+          weight: 10
+        - pattern: "az\\s+storage\\s+blob\\s+upload"
+          weight: 10
+        - pattern: "azcopy\\s+copy.*https://.*\\.blob\\.core\\.windows\\.net"
+          weight: 9
+    mitre_attack:
+      tactics: ["TA0010"]
+      techniques: ["T1537"]
+
+  - id: "ASI02-007"
+    category: "tool_misuse"
+    description: "Suspicious package installation — installing from untrusted URLs or git repos"
+    risk_level: "high"
+    triggers:
+      tool_names: ["bash", "shell", "exec"]
+    detection:
+      regex_patterns:
+        - pattern: "pip\\s+install\\s+https?://"
+          weight: 10
+        - pattern: "pip\\s+install\\s+git\\+"
+          weight: 9
+        - pattern: "npm\\s+install\\s+git\\+"
+          weight: 9
+        - pattern: "npm\\s+install\\s+https?://"
+          weight: 9
+        - pattern: "gem\\s+install\\s+--source\\s+https?://"
+          weight: 8
+    false_positive_filters:
+      - type: "whitelist_path"
+        paths: ["*/test_*", "*/ci/*", "*Dockerfile*"]
+    mitre_attack:
+      tactics: ["TA0001"]
+      techniques: ["T1195.002"]
+
+  # =========================================================================
+  # ASI03: Privilege Abuse — continued (3 new)
+  # =========================================================================
+
+  - id: "ASI03-003"
+    category: "privilege_abuse"
+    description: "Container escape — Docker socket access, nsenter, or host PID namespace"
+    risk_level: "critical"
+    triggers:
+      tool_names: ["bash", "shell", "exec"]
+    detection:
+      regex_patterns:
+        - pattern: "docker\\s+run\\s+.*-v\\s+/var/run/docker\\.sock"
+          weight: 10
+        - pattern: "nsenter\\s+--target\\s+1"
+          weight: 10
+        - pattern: "docker\\s+run\\s+.*--privileged"
+          weight: 9
+        - pattern: "mount\\s+.*cgroup.*rdma"
+          weight: 8
+    mitre_attack:
+      tactics: ["TA0004"]
+      techniques: ["T1611"]
+
+  - id: "ASI03-004"
+    category: "privilege_abuse"
+    description: "Kernel module manipulation — loading rootkits or modifying kernel"
+    risk_level: "critical"
+    triggers:
+      tool_names: ["bash", "shell", "exec"]
+    detection:
+      regex_patterns:
+        - pattern: "\\b(insmod|modprobe)\\s+"
+          weight: 10
+        - pattern: "rmmod\\s+"
+          weight: 7
+        - pattern: "echo.*>\\s*/proc/sys/"
+          weight: 9
+        - pattern: "sysctl\\s+-w\\s+"
+          weight: 8
+    mitre_attack:
+      tactics: ["TA0003"]
+      techniques: ["T1547.006"]
+
+  - id: "ASI03-005"
+    category: "privilege_abuse"
+    description: "Crontab persistence — scheduling recurring malicious tasks"
+    risk_level: "high"
+    triggers:
+      logic: "OR"
+      conditions:
+        - tool_names: ["bash", "shell", "exec"]
+        - tool_names: ["write_file", "write", "edit_file", "edit"]
+          path_patterns: [".*cron.*"]
+    detection:
+      regex_patterns:
+        - pattern: "crontab\\s+-"
+          weight: 9
+        - pattern: "\\*/\\d+\\s+\\*.*(?:curl|wget|bash|python|perl)"
+          weight: 10
+        - pattern: "echo.*crontab"
+          weight: 8
+    false_positive_filters:
+      - type: "whitelist_path"
+        paths: ["*/test_*", "*Dockerfile*"]
+    mitre_attack:
+      tactics: ["TA0003"]
+      techniques: ["T1053.003"]
+
+  # =========================================================================
+  # ASI04: Supply Chain Attacks (2 new patterns, NEW category)
+  # =========================================================================
+
+  - id: "ASI04-001"
+    category: "supply_chain"
+    description: "Typosquatting package install — common misspellings of popular packages"
+    risk_level: "high"
+    triggers:
+      tool_names: ["bash", "shell", "exec"]
+    detection:
+      regex_patterns:
+        - pattern: "pip\\s+install\\s+(reqeusts|requets|reqests|urllib2|python-dateutil2|colourama|numpyy|pandsa)"
+          weight: 10
+        - pattern: "npm\\s+install\\s+(lodashe|axois|expresss|reacct|angulr|electorn)"
+          weight: 10
+    references:
+      incidents: ["PyPI-Typosquat-2024"]
+    mitre_attack:
+      tactics: ["TA0001"]
+      techniques: ["T1195.002"]
+
+  - id: "ASI04-002"
+    category: "supply_chain"
+    description: "Git clone from untrusted source followed by build/install — potential supply chain compromise"
+    risk_level: "high"
+    triggers:
+      tool_names: ["bash", "shell", "exec"]
+    detection:
+      regex_patterns:
+        - pattern: "git\\s+clone\\s+https?://.*&&.*(?:make\\s+install|pip\\s+install|npm\\s+install|\\./configure)"
+          weight: 10
+        - pattern: "git\\s+clone\\s+https?://.*&&.*(?:cmake|cargo\\s+build|go\\s+install)"
+          weight: 9
+    false_positive_filters:
+      - type: "whitelist_path"
+        paths: ["*/test_*", "*Dockerfile*", "*/ci/*"]
+    mitre_attack:
+      tactics: ["TA0001"]
+      techniques: ["T1195.001"]
+
+  # =========================================================================
+  # ASI05: Arbitrary Code Execution — continued (4 new)
+  # =========================================================================
+
+  - id: "ASI05-003"
+    category: "code_execution"
+    description: "Polyglot payload — inline code execution via language interpreters"
+    risk_level: "high"
+    triggers:
+      tool_names: ["bash", "shell", "exec"]
+    detection:
+      regex_patterns:
+        - pattern: "python[23]?\\s+-c\\s+['\"].*(?:import\\s+os|os\\.system|subprocess|exec|eval)"
+          weight: 10
+        - pattern: "perl\\s+-e\\s+['\"].*(?:system|exec|open|socket)"
+          weight: 10
+        - pattern: "ruby\\s+-e\\s+['\"].*(?:system|exec|spawn|IO\\.popen)"
+          weight: 10
+        - pattern: "node\\s+-e\\s+['\"].*(?:child_process|exec|spawn)"
+          weight: 9
+    mitre_attack:
+      tactics: ["TA0002"]
+      techniques: ["T1059"]
+
+  - id: "ASI05-004"
+    category: "code_execution"
+    description: "Environment variable injection — LD_PRELOAD, PYTHONPATH, NODE_OPTIONS hijack"
+    risk_level: "critical"
+    triggers:
+      tool_names: ["bash", "shell", "exec"]
+    detection:
+      regex_patterns:
+        - pattern: "LD_PRELOAD\\s*=\\s*/.*\\.so"
+          weight: 10
+        - pattern: "PYTHONPATH\\s*=\\s*/tmp"
+          weight: 9
+        - pattern: "NODE_OPTIONS\\s*=.*--require"
+          weight: 9
+        - pattern: "DYLD_INSERT_LIBRARIES\\s*="
+          weight: 10
+    mitre_attack:
+      tactics: ["TA0003"]
+      techniques: ["T1574.006"]
+
+  - id: "ASI05-005"
+    category: "code_execution"
+    description: "Python pickle / marshal deserialization — arbitrary code execution via untrusted data"
+    risk_level: "high"
+    triggers:
+      tool_names: ["bash", "shell", "exec", "write_file", "write"]
+    detection:
+      regex_patterns:
+        - pattern: "pickle\\.loads?\\("
+          weight: 10
+        - pattern: "marshal\\.loads?\\("
+          weight: 9
+        - pattern: "yaml\\.(?:load|unsafe_load)\\("
+          weight: 8
+        - pattern: "shelve\\.open\\("
+          weight: 7
+    false_positive_filters:
+      - type: "whitelist_path"
+        paths: ["*/test_*", "*/fixtures/*"]
+    mitre_attack:
+      tactics: ["TA0002"]
+      techniques: ["T1059.006"]
+
+  - id: "ASI05-006"
+    category: "code_execution"
+    description: "Eval/exec injection in written files — code execution embedded in generated output"
+    risk_level: "high"
+    triggers:
+      tool_names: ["write_file", "write", "edit_file", "edit"]
+    detection:
+      regex_patterns:
+        - pattern: "\\beval\\s*\\(.*(?:atob|decode|unescape)"
+          weight: 10
+        - pattern: "\\bexec\\s*\\(.*(?:base64|decode|compile)"
+          weight: 10
+        - pattern: "Function\\s*\\(.*(?:return|eval)"
+          weight: 9
+    false_positive_filters:
+      - type: "whitelist_path"
+        paths: ["*/test_*", "*/fixtures/*"]
+    mitre_attack:
+      tactics: ["TA0002"]
+      techniques: ["T1059.007"]

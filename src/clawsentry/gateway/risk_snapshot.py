@@ -1,7 +1,8 @@
 """
-Risk scoring engine — D1-D5 five-dimensional assessment.
+Risk scoring engine — D1-D6 six-dimensional assessment.
 
 Design basis: 04-policy-decision-and-fallback.md section 12-13.
+E-4 extension: D6 injection detection multiplier (2026-03-24).
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+from .injection_detector import score_layer1
 from .models import (
     AgentTrustLevel,
     CanonicalEvent,
@@ -322,12 +324,12 @@ _DIMENSION_DEFAULTS = {
 
 
 def _composite_score(dims: RiskDimensions) -> int:
-    """Calculate composite_score = max(D1, D2, D3) + D4 + D5."""
+    """Calculate composite_score = max(D1, D2, D3) + D4 + D5. (Legacy, unused.)"""
     return max(dims.d1, dims.d2, dims.d3) + dims.d4 + dims.d5
 
 
 def _score_to_risk_level(score: int) -> RiskLevel:
-    """Map composite_score to risk_level per 04 section 12.3."""
+    """Map composite_score to risk_level per 04 section 12.3. (Legacy, unused.)"""
     if score >= 5:
         return RiskLevel.CRITICAL
     if score >= 4:
@@ -335,6 +337,45 @@ def _score_to_risk_level(score: int) -> RiskLevel:
     if score >= 2:
         return RiskLevel.MEDIUM
     return RiskLevel.LOW
+
+
+# ---------------------------------------------------------------------------
+# E-4: New composite scoring with D6 injection multiplier
+# ---------------------------------------------------------------------------
+
+def _composite_score_v2(dims: RiskDimensions) -> float:
+    """E-4 composite score with D6 injection multiplier. Returns 0.0-3.0."""
+    base_score = (
+        0.4 * max(dims.d1, dims.d2, dims.d3)
+        + 0.25 * dims.d4
+        + 0.15 * dims.d5
+    )
+    injection_multiplier = 1.0 + 0.5 * (dims.d6 / 3.0)
+    return base_score * injection_multiplier
+
+
+def _score_to_risk_level_v2(score: float) -> RiskLevel:
+    """E-4 risk level thresholds."""
+    if score >= 2.2:
+        return RiskLevel.CRITICAL
+    if score >= 1.5:
+        return RiskLevel.HIGH
+    if score >= 0.8:
+        return RiskLevel.MEDIUM
+    return RiskLevel.LOW
+
+
+def _extract_text_for_d6(event: CanonicalEvent) -> str:
+    """Extract analyzable text from event payload for D6 scoring."""
+    payload = event.payload or {}
+    parts: list[str] = []
+    for key in ("command", "content", "text", "body", "input", "code"):
+        val = payload.get(key)
+        if isinstance(val, str) and val:
+            parts.append(val)
+    if event.risk_hints:
+        parts.extend(str(h) for h in event.risk_hints)
+    return " ".join(parts)
 
 
 def compute_risk_snapshot(
@@ -345,11 +386,13 @@ def compute_risk_snapshot(
     """
     Compute an immutable RiskSnapshot for the given event.
 
-    Algorithm per 04-policy-decision-and-fallback.md section 12:
+    Algorithm (E-4 revision):
     1. Score each dimension D1-D5.
-    2. Apply short-circuit rules (before composite scoring).
-    3. Compute composite_score = max(D1,D2,D3) + D4 + D5.
-    4. Map to risk_level.
+    2. Score D6 via injection detector (Layer 1 heuristic).
+    3. Apply short-circuit rules (before composite scoring).
+    4. Compute composite_score via v2 formula (D6 multiplier).
+    5. Map to risk_level via v2 thresholds.
+    6. D6 forced alert: D6 >= 2.0 and LOW -> MEDIUM.
     """
     missing_dims: list[str] = []
 
@@ -381,7 +424,11 @@ def compute_risk_snapshot(
     if context is None or context.agent_trust_level is None:
         missing_dims.append("d5")
 
-    dims = RiskDimensions(d1=d1, d2=d2, d3=d3, d4=d4, d5=d5)
+    # D6: Injection detection
+    payload_text = _extract_text_for_d6(event)
+    d6 = score_layer1(payload_text, event.tool_name or "") if payload_text else 0.0
+
+    dims = RiskDimensions(d1=d1, d2=d2, d3=d3, d4=d4, d5=d5, d6=d6)
 
     # Short-circuit rules (priority over scoring)
     sc_rule: Optional[str] = None
@@ -392,13 +439,17 @@ def compute_risk_snapshot(
             sc_level = level
             break
 
-    # Composite scoring
-    score = _composite_score(dims)
+    # Composite scoring (E-4 v2 formula)
+    score = _composite_score_v2(dims)
 
     if sc_level is not None:
         risk_level = sc_level
     else:
-        risk_level = _score_to_risk_level(score)
+        risk_level = _score_to_risk_level_v2(score)
+
+    # D6 forced alert: high injection score on low-risk event → bump to MEDIUM
+    if d6 >= 2.0 and risk_level == RiskLevel.LOW:
+        risk_level = RiskLevel.MEDIUM
 
     snapshot = RiskSnapshot(
         risk_level=risk_level,

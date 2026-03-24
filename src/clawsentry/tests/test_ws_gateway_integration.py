@@ -439,13 +439,13 @@ class TestWSHighRiskToAlertRegistry:
         ]
         assert len(session_alerts) == 0
 
-    async def test_bash_echo_is_high_risk_due_to_untrusted_agent(
+    async def test_bash_echo_is_medium_risk_with_untrusted_agent(
         self, adapter: OpenClawAdapter, gateway: SupervisionGateway
     ):
-        """Even 'echo hello' via bash is HIGH risk when agent trust is unset.
+        """'echo hello' via bash is MEDIUM risk when agent trust is unset (E-4 formula).
 
-        L1 scoring: D1=2 (bash) + D5=2 (untrusted default) → composite=4 → HIGH.
-        This confirms the monitor's conservative fail-closed posture.
+        L1 scoring: D1=2 (bash), D2=1(fallback), D3=0(echo safe), D4=0, D5=2, D6=0
+        → base=0.4*2+0.15*2=1.1 → MEDIUM (no alert, below HIGH threshold).
         """
         await adapter.handle_ws_approval_event(
             _make_ws_payload(
@@ -459,8 +459,8 @@ class TestWSHighRiskToAlertRegistry:
             a for a in alerts["alerts"]
             if a["session_id"] == "sess-bash-echo"
         ]
-        # bash + untrusted agent → HIGH risk → alert created
-        assert len(session_alerts) >= 1
+        # bash echo + untrusted agent → MEDIUM risk → no alert (only HIGH/CRITICAL create alerts)
+        assert len(session_alerts) == 0
 
     async def test_alert_broadcast_via_event_bus(
         self, adapter: OpenClawAdapter, gateway: SupervisionGateway
@@ -617,12 +617,13 @@ class TestWSEventToTrajectoryStore:
         assert decision["decision"] == "allow"
         assert decision["risk_level"] == "low"
 
-    async def test_bash_echo_trajectory_reflects_high_risk(
+    async def test_bash_echo_trajectory_reflects_medium_risk(
         self, adapter: OpenClawAdapter, gateway: SupervisionGateway
     ):
-        """Even 'echo hello' via bash should be recorded as block/high.
+        """'echo hello' via bash is recorded as allow/medium (E-4 formula).
 
-        D1=2 (bash) + D5=2 (untrusted) → composite=4 → HIGH → block.
+        D1=2 (bash), D2=1(fallback), D3=0(echo safe), D4=0, D5=2, D6=0
+        → base=1.1 → MEDIUM → allow.
         """
         sid = "sess-traj-bash-echo"
         await adapter.handle_ws_approval_event(
@@ -632,8 +633,8 @@ class TestWSEventToTrajectoryStore:
         records = gateway.trajectory_store.replay_session(sid)
         assert len(records) == 1
         decision = records[0]["decision"]
-        assert decision["decision"] == "block"
-        assert decision["risk_level"] in ("high", "critical")
+        assert decision["decision"] == "allow"
+        assert decision["risk_level"] == "medium"
 
 
 # ---------------------------------------------------------------------------

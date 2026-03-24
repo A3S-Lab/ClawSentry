@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import enum
 import re
+import time as _time
+from dataclasses import dataclass as _dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
+from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -259,16 +262,44 @@ class CanonicalDecision(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Canary Token (injection leak detection)
+# ---------------------------------------------------------------------------
+
+@_dataclass
+class CanaryToken:
+    """Single canary token injected into DecisionContext for leak detection."""
+    token: str
+    injected_at: float
+
+    @classmethod
+    def generate(cls) -> "CanaryToken":
+        return cls(
+            token=f"<!-- ahp-ref:{uuid4().hex[:16]} -->",
+            injected_at=_time.time(),
+        )
+
+    def check_leak(self, text: str) -> float:
+        """Return injection score: 1.5 for full match, 1.0 for core match, 0.0 otherwise."""
+        if self.token in text:
+            return 1.5
+        core = self.token.replace("<!-- ", "").replace(" -->", "")
+        if core in text:
+            return 1.0
+        return 0.0
+
+
+# ---------------------------------------------------------------------------
 # RiskSnapshot (04 section 13)
 # ---------------------------------------------------------------------------
 
 class RiskDimensions(BaseModel):
-    """D1-D5 dimension values."""
+    """D1-D6 dimension values."""
     d1: int = Field(..., ge=0, le=3)  # Tool type danger
     d2: int = Field(..., ge=0, le=3)  # Target path sensitivity
     d3: int = Field(..., ge=0, le=3)  # Command pattern danger
     d4: int = Field(..., ge=0, le=2)  # Context risk accumulation
     d5: int = Field(..., ge=0, le=2)  # Agent trust level
+    d6: float = Field(default=0.0, ge=0.0, le=3.0)  # Injection detection
 
 
 class RiskOverride(BaseModel):
@@ -285,7 +316,7 @@ class RiskSnapshot(BaseModel):
     Once produced, must not change during the decision/retry lifecycle.
     """
     risk_level: RiskLevel
-    composite_score: int = Field(..., ge=0, le=7)  # max(D1,D2,D3)+D4+D5 = 3+2+2
+    composite_score: float = Field(..., ge=0)  # base: max(D1,D2,D3)+D4+D5; may include D6 multiplier
     dimensions: RiskDimensions
     short_circuit_rule: Optional[str] = None  # SC-1/SC-2/SC-3 or null
     missing_dimensions: list[str] = Field(default_factory=list)
@@ -310,6 +341,44 @@ class RiskSnapshot(BaseModel):
         except (ValueError, TypeError):
             raise ValueError(f"classified_at must be valid UTC ISO8601, got '{v}'")
         return v
+
+
+# ---------------------------------------------------------------------------
+# Post-Action Security Types
+# ---------------------------------------------------------------------------
+
+class PostActionResponseTier(str, enum.Enum):
+    """Graduated response tiers for post-action security findings."""
+    LOG_ONLY = "log_only"
+    MONITOR = "monitor"
+    ESCALATE = "escalate"
+    EMERGENCY = "emergency"
+
+
+@_dataclass
+class PostActionFinding:
+    """Result from post-action security analysis."""
+    tier: PostActionResponseTier
+    patterns_matched: list[str]
+    score: float
+    details: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        self.patterns_matched = list(self.patterns_matched)  # defensive copy
+        if self.details is None:
+            self.details = {}
+        if not (0.0 <= self.score <= 3.0):
+            raise ValueError(
+                f"PostActionFinding.score must be in [0.0, 3.0], got {self.score}"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "tier": self.tier.value,
+            "patterns_matched": self.patterns_matched,
+            "score": self.score,
+            "details": self.details,
+        }
 
 
 # ---------------------------------------------------------------------------

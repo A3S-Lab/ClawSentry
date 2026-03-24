@@ -21,6 +21,7 @@ from .models import (
     RiskSnapshot,
 )
 from .llm_provider import LLMProvider
+from .pattern_matcher import PatternMatcher
 from .risk_snapshot import DANGEROUS_TOOLS
 
 
@@ -106,6 +107,9 @@ def has_manual_l2_escalation_flag(context: Optional[DecisionContext]) -> bool:
 class RuleBasedAnalyzer:
     """L2 rule-based semantic analyzer — extracted from L1PolicyEngine._run_l2_analysis."""
 
+    def __init__(self) -> None:
+        self._pattern_matcher = PatternMatcher()
+
     @property
     def analyzer_id(self) -> str:
         return "rule-based"
@@ -138,6 +142,19 @@ class RuleBasedAnalyzer:
         elif key_domain and (event.tool_name or "").lower() in DANGEROUS_TOOLS:
             target_level = _max_risk_level(target_level, RiskLevel.HIGH)
             reasons.append("dangerous tool on key domain asset")
+
+        # Attack pattern matching (E-4)
+        matched = self._pattern_matcher.match(
+            tool_name=event.tool_name or "",
+            payload=event.payload or {},
+            content=text,
+        )
+        if matched:
+            max_pattern_risk = max(
+                matched, key=lambda p: RISK_LEVEL_ORDER.get(p.risk_level, 0)
+            ).risk_level
+            target_level = _max_risk_level(target_level, max_pattern_risk)
+            reasons.append(f"attack_pattern: {', '.join(p.id for p in matched)}")
 
         if has_manual_l2_escalation_flag(context):
             target_level = _max_risk_level(target_level, RiskLevel.HIGH)
