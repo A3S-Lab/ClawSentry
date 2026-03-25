@@ -35,6 +35,9 @@ clawsentry-stack     # 等价于 clawsentry stack
     OPENCLAW_OPERATOR_TOKEN="quoted-value"
     ```
 
+!!! abstract "本页快速导航"
+    [clawsentry start](#clawsentry-start) · [clawsentry init](#clawsentry-init) · [clawsentry gateway](#clawsentry-gateway) · [clawsentry stack](#clawsentry-stack) · [clawsentry harness](#clawsentry-harness) · [clawsentry watch](#clawsentry-watch)
+
 ---
 
 ## clawsentry start
@@ -494,7 +497,7 @@ clawsentry watch [--gateway-url URL] [--token TOKEN] [--filter TYPES]
 [10:30:47]  DEFER     sudo chmod 777 /etc/passwd               risk=high    Requires operator approval
 ```
 
-颜色编码：:red_square: BLOCK (红色) | :green_square: ALLOW (绿色) | :yellow_square: DEFER (黄色) | :blue_square: MODIFY (青色)
+颜色编码：:large_red_square: BLOCK（红色）| :large_green_square: ALLOW（绿色）| :large_yellow_square: DEFER（黄色）| :large_blue_square: MODIFY（青色）
 
 #### 告警事件
 

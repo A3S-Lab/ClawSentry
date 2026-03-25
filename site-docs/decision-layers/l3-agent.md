@@ -3,6 +3,9 @@ title: L3 审查 Agent
 description: 自主审查代理 — 多轮工具调用、YAML Skills、推理轨迹、安全约束
 ---
 
+!!! abstract "本页快速导航"
+    [概述](#overview) · [AgentAnalyzer](#agent-analyzer) · [ReadOnlyToolkit](#toolkit) · [SkillRegistry](#skill-registry) · [推理轨迹](#trace) · [触发条件](#trigger-policy) · [配置](#configuration) · [代码位置](#source-code)
+
 # L3 审查 Agent
 
 ## 概述 {#overview}

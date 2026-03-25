@@ -109,31 +109,31 @@ def is_active(self) -> bool:
 
 ### 公式
 
-$$
+\[
 \text{confidence} = 0.30 \times R_c + 0.20 \times R_f + 0.20 \times R_x + 0.20 \times R_a + 0.10 \times R_t
-$$
+\]
 
 ### 各因子详解
 
 | 因子 | 权重 | 变量名 | 计算方式 |
 |------|:----:|--------|---------|
-| 确认率 | 30% | $R_c$ | `confirmed_count / max(total, 1)` |
-| 触发频率 | 20% | $R_f$ | `min(trigger_count / 10.0, 1.0)`（触发 10 次为满分） |
-| 跨框架加成 | 20% | $R_x$ | `min((framework_count - 1) / 2.0, 1.0)` |
-| 准确率 | 20% | $R_a$ | `1.0 - fp_rate` |
-| 时效性 | 10% | $R_t$ | 见下表 |
+| 确认率 | 30% | \(R_c\) | `confirmed_count / max(total, 1)` |
+| 触发频率 | 20% | \(R_f\) | `min(trigger_count / 10.0, 1.0)`（触发 10 次为满分） |
+| 跨框架加成 | 20% | \(R_x\) | `min((framework_count - 1) / 2.0, 1.0)` |
+| 准确率 | 20% | \(R_a\) | `1.0 - fp_rate` |
+| 时效性 | 10% | \(R_t\) | 见下表 |
 
-跨框架加成 $R_x$ 的取值说明：
+跨框架加成 \(R_x\) 的取值说明：
 
-| 来源框架数 | $R_x$ 值 |
+| 来源框架数 | \(R_x\) 值 |
 |:--------:|:-------:|
 | 1 个（如仅 a3s-code） | 0.0 |
 | 2 个（a3s-code + openclaw） | 0.5 |
 | 3 个及以上 | 1.0 |
 
-时效性 $R_t$ 的衰减规则：
+时效性 \(R_t\) 的衰减规则：
 
-| 距上次触发时间 | $R_t$ 值 |
+| 距上次触发时间 | \(R_t\) 值 |
 |:------------:|:-------:|
 | ≤ 7 天 | 1.0 |
 | ≤ 30 天 | 0.5 |
@@ -501,3 +501,12 @@ pattern_id = f"EV-{cmd_hash[:8].upper()}"  # 例如 EV-A3F8B2C1
 | 内置模式库 | `src/clawsentry/gateway/attack_patterns.yaml` | 25 条内置核心模式（v1.1），不受进化管理 |
 | 配置集成 | `src/clawsentry/gateway/detection_config.py` | `DetectionConfig.evolving_enabled` + `evolved_patterns_path` 字段 |
 | REST API | `src/clawsentry/gateway/server.py` | `GET /ahp/patterns` + `POST /ahp/patterns/confirm` 端点实现 |
+
+---
+
+## 相关页面
+
+- [攻击模式定制](attack-patterns.md) — 静态 YAML 攻击模式库（自进化的"种子"来源）
+- [L2 语义分析](../decision-layers/l2-semantic.md) — PatternMatcher 集成点，候选模式的触发层
+- [检测管线配置](../configuration/detection-config.md) — `CS_EVOLVING_ENABLED`、`CS_EVOLVED_PATTERNS_PATH` 参数
+- [REST API → /ahp/patterns](../api/decisions.md) — 模式确认/拒绝的 API 端点

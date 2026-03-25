@@ -7,6 +7,9 @@ description: ClawSentry 报表、会话管理、告警和 SSE 实时推送端点
 
 ClawSentry Gateway 提供一整套 HTTP API 用于健康检查、聚合统计、会话追踪、告警管理和实时事件流推送。所有 `/report/*` 端点均需 Bearer Token 认证（除非 `CS_AUTH_TOKEN` 为空）。
 
+!!! abstract "本页快速导航"
+    [GET /health](#get-health) · [GET /report/summary](#get-report-summary) · [GET /report/sessions](#get-report-sessions) · [GET /report/session/{id}](#get-report-session) · [GET /report/stream (SSE)](#get-report-stream) · [GET /report/alerts](#get-report-alerts) · [POST /report/alerts/{id}/ack](#post-report-alerts-acknowledge)
+
 ---
 
 ## GET /health — 健康检查 {#get-health}

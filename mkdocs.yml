@@ -71,6 +71,8 @@ markdown_extensions:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.mark
+  - pymdownx.arithmatex:
+      generic: true
   - pymdownx.keys
   - attr_list
   - md_in_html
@@ -83,6 +85,10 @@ extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/Elroyper/ClawSentry
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
 copyright: Copyright &copy; 2026 ClawSentry Contributors
 
@@ -106,17 +112,20 @@ nav:
     - 决策端点: api/decisions.md
     - 报表与监控: api/reporting.md
     - 认证: api/authentication.md
-  - 三层决策详解:
+  - 安全决策引擎:
     - L1 规则引擎: decision-layers/l1-rules.md
     - L2 语义分析: decision-layers/l2-semantic.md
     - L3 审查 Agent: decision-layers/l3-agent.md
     - Post-action 围栏: decision-layers/post-action.md
+    - 轨迹分析器: decision-layers/trajectory-analyzer.md
   - Web 仪表板: dashboard/index.md
   - 高级用法:
     - 自定义 L3 Skills: advanced/custom-skills.md
     - 自定义 L2 Analyzer: advanced/custom-analyzer.md
     - 自定义 Adapter: advanced/custom-adapter.md
     - 自进化模式库: advanced/pattern-evolution.md
+    - 攻击模式定制: advanced/attack-patterns.md
+    - 向量相似度接入 (D6): advanced/embedding-backend.md
   - 部署运维:
     - 生产部署: operations/deployment.md
     - 故障排查: operations/troubleshooting.md

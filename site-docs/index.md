@@ -109,8 +109,8 @@ hide:
 ```mermaid
 graph TB
     subgraph Agents["Agent 框架"]
-        A3S["a3s-code<br/>(stdio / HTTP)"]
-        OC["OpenClaw<br/>(WebSocket / Webhook)"]
+        A3S["a3s-code\n(stdio / HTTP)"]
+        OC["OpenClaw\n(WebSocket / Webhook)"]
     end
 
     subgraph Adapters["适配器层"]
@@ -118,44 +118,50 @@ graph TB
         OCA["OpenClaw Adapter"]
     end
 
-    subgraph Core["ClawSentry 核心"]
-        CE["CanonicalEvent<br/>(AHP 统一协议)"]
-        L1["L1 规则引擎<br/>D1-D6 六维评分 · <1ms"]
-        L2["L2 语义分析<br/>RuleBased / LLM · <3s"]
-        L3["L3 审查 Agent<br/>多轮工具推理 · <30s"]
-        PE["PolicyEngine<br/>决策编排"]
+    subgraph Sync["同步决策路径（pre_action 阻塞）"]
+        CE["CanonicalEvent\nAHP 统一协议"]
+        L1["L1 规则引擎\nD1-D6 六维评分 · &lt;1ms"]
+        L2["L2 语义分析\nLLM + PatternMatcher · &lt;3s"]
+        L3["L3 审查 Agent\n多轮工具推理 · &lt;30s"]
+        PE["PolicyEngine\n决策编排 + 会话执法"]
+    end
+
+    subgraph Async["异步分析路径（post_action 非阻塞）"]
+        PA["Post-action 围栏\n4层检测器：注入/外传/凭证/混淆"]
+        TA["轨迹分析器\n5种攻击序列·滑动窗口"]
+        PEV["PatternEvolution\n自进化模式库·信心评分"]
     end
 
     subgraph State["状态与存储"]
-        SR["SessionRegistry<br/>会话追踪"]
-        TS["TrajectoryStore<br/>轨迹持久化"]
-        EB["EventBus<br/>事件广播"]
-        AR["AlertRegistry<br/>告警聚合"]
+        SR["SessionRegistry"]
+        DB[("SQLite\nTrajectoryStore")]
+        EB["SSE EventBus"]
+        AR["AlertRegistry"]
     end
 
     subgraph Output["输出通道"]
-        SSE["SSE 实时推送"]
-        CLI["clawsentry watch<br/>终端监控"]
-        WEB["Web 仪表板<br/>React SPA"]
-        API["REST API<br/>报表 & 管理"]
+        CLI["clawsentry watch\n终端实时监控"]
+        WEB["Web 仪表板\nReact SPA"]
+        API["REST API\n报表 & 管理"]
     end
 
-    A3S --> A3SA
-    OC --> OCA
-    A3SA --> CE
-    OCA --> CE
-    CE --> PE
-    PE --> L1
-    L1 -->|"需升级"| L2
-    L2 -->|"需升级"| L3
-    L1 & L2 & L3 --> PE
+    A3S --> A3SA --> CE
+    OC --> OCA --> CE
+    CE --> PE --> L1
+    L1 -->|"MEDIUM/关键词"| L2
+    L2 -->|"HIGH + 触发条件"| L3
+    L1 & L2 & L3 -->|"CanonicalDecision"| PE
+    PE -->|"同步判决"| A3SA & OCA
+
+    CE -.->|"post_action 异步"| PA & TA
+    L2 -.->|"候选模式"| PEV
+
     PE --> SR
-    PE --> TS
+    PA & TA --> EB
+    L3 --> DB
     SR --> EB
-    EB --> SSE
     EB --> AR
-    SSE --> CLI
-    SSE --> WEB
+    EB --> CLI & WEB
     AR --> API
 ```
 
