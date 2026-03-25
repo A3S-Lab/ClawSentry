@@ -2,6 +2,27 @@
 
 本文件记录 ClawSentry 各版本的重要变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.2.1] — 2026-03-25
+
+### 修复
+
+#### OpenClaw 兼容性审查（12 defects + 31 tests，2026-03-25）
+- **[C-1/C-2]** `run_gateway()` 未接入 `DetectionConfig` 和 LLM analyzer — 独立启动时 L1/L2 均回退默认值
+- **[H-1]** OpenClaw POST_ACTION 事件缺少 `output` 字段映射（`toolOutput`/`command_output` 等别名未转换）
+- **[H-2]** CompositeAnalyzer 热重载遍历失败 — `reload_patterns` 未递归查找内层 `_pattern_matcher`
+- **[H-4]** Webhook 会话 ID 提取仅识别 `sessionKey`，缺少 `sessionId` 回退
+- **[H-5/L-3]** WS Future 注册顺序错误（先 send 后 register 导致竞态）+ `get_event_loop()` 弃用
+- **[M-1]** D6 注入检测遗漏 OpenClaw `message`/`transcript`/`userMessage`/`user_message` 字段
+- **[M-2/M-4]** `extract_candidate()` 未持久化 + `store_path` 空路径未校验
+- **[M-6]** `CS_EVOLVING_ENABLED` 非法值静默忽略，现增加 warning 日志
+- **[L-1]** `post_action_finding` SSE 事件缺少 `source_framework` 字段
+
+#### 测试新增
+- 31 个 OpenClaw 集成测试：D6 注入检测 / post-action 围栏 / 轨迹序列 / 攻击模式匹配 / Gateway 配置接入
+- 测试总量：1239 → 1271（+32 tests）
+
+---
+
 ## [0.2.0] — 2026-03-24
 
 ### 新增
@@ -151,5 +172,6 @@
 - 775 个测试用例，覆盖单元测试 + 集成测试 + E2E 测试
 - 测试通过时间 ~6.5s
 
+[0.2.1]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.1.0
