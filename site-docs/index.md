@@ -106,6 +106,8 @@ hide:
 
 ## 架构总览
 
+![ClawSentry 架构总览](assets/architecture-overview.png)
+
 ```mermaid
 graph TB
     subgraph Agents["Agent 框架"]

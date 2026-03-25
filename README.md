@@ -70,6 +70,8 @@ open http://localhost:8080/ui      # open web dashboard
 
 ## Architecture
 
+![ClawSentry Architecture Overview](site-docs/assets/architecture-overview.png)
+
 ```
 a3s-code ──→ A3S Adapter ──┐
                             ├──→ AHP CanonicalEvent ──→ PolicyEngine ──→ L1/L2/L3
