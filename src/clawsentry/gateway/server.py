@@ -1118,8 +1118,10 @@ class SupervisionGateway:
             decision = self._make_enforcement_decision(enforcement, req.event)
             # Still need a snapshot for recording — run L1 but override decision
             try:
+                remaining_ms = max(0, (deadline_at - time.monotonic()) * 1000)
                 _, snapshot, _ = self.policy_engine.evaluate(
-                    req.event, req.context, req.decision_tier
+                    req.event, req.context, req.decision_tier,
+                    deadline_budget_ms=remaining_ms,
                 )
             except Exception:
                 from .policy_engine import RiskSnapshot
@@ -1129,8 +1131,10 @@ class SupervisionGateway:
         else:
             # Evaluate normally
             try:
+                remaining_ms = max(0, (deadline_at - time.monotonic()) * 1000)
                 decision, snapshot, actual_tier = self.policy_engine.evaluate(
-                    req.event, req.context, req.decision_tier
+                    req.event, req.context, req.decision_tier,
+                    deadline_budget_ms=remaining_ms,
                 )
             except Exception:
                 logger.exception("Policy engine error")

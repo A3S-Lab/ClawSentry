@@ -1761,6 +1761,102 @@ def test_policy_engine_carries_l3_trace_to_snapshot():
 
 
 # ---------------------------------------------------------------------------
+# CS-009: L2 budget capped by deadline
+# ---------------------------------------------------------------------------
+
+def test_l2_budget_capped_by_deadline():
+    """CS-009: L2 budget must not exceed remaining deadline."""
+    from clawsentry.gateway.policy_engine import L1PolicyEngine
+    from clawsentry.gateway.semantic_analyzer import L2Result
+    from clawsentry.gateway.models import (
+        CanonicalEvent, DecisionContext, DecisionTier, EventType, RiskLevel,
+    )
+
+    captured_budget = []
+
+    class SpyAnalyzer:
+        analyzer_id = "spy"
+
+        async def analyze(self, event, context, l1_snapshot, budget_ms):
+            captured_budget.append(budget_ms)
+            return L2Result(
+                target_level=RiskLevel.LOW,
+                reasons=["ok"],
+                confidence=0.8,
+                analyzer_id="spy",
+                latency_ms=1.0,
+            )
+
+    engine = L1PolicyEngine(analyzer=SpyAnalyzer())
+
+    event = CanonicalEvent(
+        event_id="evt-dl",
+        trace_id="trace-dl",
+        event_type=EventType.PRE_ACTION,
+        session_id="sess-dl",
+        agent_id="agent-dl",
+        source_framework="test",
+        occurred_at="2026-03-26T00:00:00+00:00",
+        payload={"command": "cat /etc/passwd"},
+        tool_name="bash",
+        risk_hints=["credential_exfiltration"],
+    )
+    ctx = DecisionContext(session_risk_summary={"l2_escalate": True})
+
+    # default l2_budget_ms is 3000; pass deadline_budget_ms=1500 → should cap
+    _, _, _ = engine.evaluate(event, ctx, DecisionTier.L2, deadline_budget_ms=1500.0)
+    assert len(captured_budget) == 1
+    assert captured_budget[0] <= 1500.0, (
+        f"L2 budget {captured_budget[0]} exceeded deadline 1500"
+    )
+
+
+def test_l2_budget_uncapped_without_deadline():
+    """CS-009: Without deadline, L2 budget should use default config value."""
+    from clawsentry.gateway.policy_engine import L1PolicyEngine
+    from clawsentry.gateway.semantic_analyzer import L2Result
+    from clawsentry.gateway.models import (
+        CanonicalEvent, DecisionContext, DecisionTier, EventType, RiskLevel,
+    )
+
+    captured_budget = []
+
+    class SpyAnalyzer:
+        analyzer_id = "spy"
+
+        async def analyze(self, event, context, l1_snapshot, budget_ms):
+            captured_budget.append(budget_ms)
+            return L2Result(
+                target_level=RiskLevel.LOW,
+                reasons=["ok"],
+                confidence=0.8,
+                analyzer_id="spy",
+                latency_ms=1.0,
+            )
+
+    engine = L1PolicyEngine(analyzer=SpyAnalyzer())
+
+    event = CanonicalEvent(
+        event_id="evt-dl2",
+        trace_id="trace-dl2",
+        event_type=EventType.PRE_ACTION,
+        session_id="sess-dl2",
+        agent_id="agent-dl2",
+        source_framework="test",
+        occurred_at="2026-03-26T00:00:00+00:00",
+        payload={"command": "cat /etc/passwd"},
+        tool_name="bash",
+        risk_hints=["credential_exfiltration"],
+    )
+    ctx = DecisionContext(session_risk_summary={"l2_escalate": True})
+
+    # No deadline → should use full default budget (5000ms from DetectionConfig)
+    _, _, _ = engine.evaluate(event, ctx, DecisionTier.L2)
+    assert len(captured_budget) == 1
+    assert captured_budget[0] == 5000.0
+
+
+# ---------------------------------------------------------------------------
 # G-2: _gateway_args_from_env() respects environment variables
 # ---------------------------------------------------------------------------
 

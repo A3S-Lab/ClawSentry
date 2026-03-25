@@ -8,7 +8,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from clawsentry.gateway.server import SupervisionGateway, create_http_app
-from clawsentry.gateway.stack import add_resolve_endpoint
+from clawsentry.gateway.stack import add_resolve_endpoint, _build_openclaw_runtime
 
 
 class TestResolveEndpoint:
@@ -142,3 +142,48 @@ class TestResolveEndpoint:
                 os.environ.pop("CS_AUTH_TOKEN", None)
             else:
                 os.environ["CS_AUTH_TOKEN"] = original
+
+
+class TestBuildOpenclawRuntimeEnforcement:
+    """CS-010: _build_openclaw_runtime must forward enforcement fields."""
+
+    def test_enforcement_fields_passed_to_config(self):
+        runtime = _build_openclaw_runtime(
+            webhook_token="tok",
+            webhook_secret=None,
+            webhook_require_https=False,
+            webhook_max_body_bytes=1_000_000,
+            source_protocol_version="1.0",
+            git_short_sha="abc1234",
+            profile_version=1,
+            uds_path="/tmp/test.sock",
+            gateway_host="127.0.0.1",
+            gateway_port=8080,
+            gateway_transport_preference="uds_first",
+            enforcement_enabled=True,
+            openclaw_ws_url="ws://127.0.0.1:19999",
+            openclaw_operator_token="test-op-token",
+        )
+        assert runtime.config.enforcement_enabled is True
+        assert runtime.config.openclaw_ws_url == "ws://127.0.0.1:19999"
+        assert runtime.config.openclaw_operator_token == "test-op-token"
+        assert runtime.approval_client._config.enabled is True
+        assert runtime.approval_client._config.ws_url == "ws://127.0.0.1:19999"
+        assert runtime.approval_client._config.operator_token == "test-op-token"
+
+    def test_enforcement_defaults_when_omitted(self):
+        runtime = _build_openclaw_runtime(
+            webhook_token="tok",
+            webhook_secret=None,
+            webhook_require_https=False,
+            webhook_max_body_bytes=1_000_000,
+            source_protocol_version="1.0",
+            git_short_sha="abc1234",
+            profile_version=1,
+            uds_path="/tmp/test.sock",
+            gateway_host="127.0.0.1",
+            gateway_port=8080,
+            gateway_transport_preference="uds_first",
+        )
+        assert runtime.config.enforcement_enabled is False
+        assert runtime.approval_client._config.enabled is False

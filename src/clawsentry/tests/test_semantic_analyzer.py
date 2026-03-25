@@ -601,6 +601,61 @@ class TestCompositeAllZeroConfidence:
 
 
 # ===========================================================================
+# CompositeAnalyzer — trace preservation (CS-008)
+# ===========================================================================
+
+class TestCompositeAnalyzerPreservesTrace:
+    """CS-008: CompositeAnalyzer must forward trace from best analyzer."""
+
+    def test_trace_forwarded_from_best(self):
+        trace_data = {"trigger_reason": "manual", "verdict": "escalate"}
+
+        class FakeWithTrace:
+            @property
+            def analyzer_id(self):
+                return "fake-with-trace"
+
+            async def analyze(self, event, context, l1_snapshot, budget_ms):
+                return L2Result(
+                    target_level=RiskLevel.HIGH,
+                    reasons=["test"],
+                    confidence=0.9,
+                    analyzer_id="fake-with-trace",
+                    latency_ms=1.0,
+                    trace=trace_data,
+                )
+
+        composite = CompositeAnalyzer(analyzers=[FakeWithTrace()])
+        snap = _snap(RiskLevel.LOW, score=1)
+        result = asyncio.run(
+            composite.analyze(_evt(tool_name="bash"), _ctx(), snap, 5000)
+        )
+        assert result.trace == trace_data, f"trace lost: {result.trace}"
+
+    def test_trace_none_when_best_has_no_trace(self):
+        class FakeNoTrace:
+            @property
+            def analyzer_id(self):
+                return "fake-no-trace"
+
+            async def analyze(self, event, context, l1_snapshot, budget_ms):
+                return L2Result(
+                    target_level=RiskLevel.HIGH,
+                    reasons=["test"],
+                    confidence=0.9,
+                    analyzer_id="fake-no-trace",
+                    latency_ms=1.0,
+                )
+
+        composite = CompositeAnalyzer(analyzers=[FakeNoTrace()])
+        snap = _snap(RiskLevel.LOW, score=1)
+        result = asyncio.run(
+            composite.analyze(_evt(tool_name="bash"), _ctx(), snap, 5000)
+        )
+        assert result.trace is None
+
+
+# ===========================================================================
 # event_text UTF-8 truncation safety (Task 9)
 # ===========================================================================
 

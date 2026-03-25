@@ -163,6 +163,9 @@ def _build_openclaw_runtime(
     gateway_host: str,
     gateway_port: int,
     gateway_transport_preference: str,
+    enforcement_enabled: bool = False,
+    openclaw_ws_url: str = "",
+    openclaw_operator_token: str = "",
 ) -> OpenClawRuntime:
     config = OpenClawBootstrapConfig(
         webhook_token=webhook_token,
@@ -176,6 +179,9 @@ def _build_openclaw_runtime(
         gateway_http_url=f"http://{gateway_host}:{gateway_port}/ahp",
         gateway_uds_path=uds_path,
         gateway_transport_preference=gateway_transport_preference,
+        enforcement_enabled=enforcement_enabled,
+        openclaw_ws_url=openclaw_ws_url,
+        openclaw_operator_token=openclaw_operator_token,
     )
     return build_openclaw_runtime(config)
 
@@ -345,6 +351,9 @@ async def run_stack(args: argparse.Namespace) -> None:
             gateway_host=args.gateway_host,
             gateway_port=args.gateway_port,
             gateway_transport_preference=args.gateway_transport_preference,
+            enforcement_enabled=bootstrap_cfg.enforcement_enabled,
+            openclaw_ws_url=bootstrap_cfg.openclaw_ws_url,
+            openclaw_operator_token=bootstrap_cfg.openclaw_operator_token,
         )
         webhook_app = create_openclaw_webhook_app(openclaw_runtime)
 

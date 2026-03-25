@@ -92,9 +92,13 @@ class L1PolicyEngine:
         event: CanonicalEvent,
         context: Optional[DecisionContext] = None,
         requested_tier: DecisionTier = DecisionTier.L1,
+        deadline_budget_ms: float | None = None,
     ) -> tuple[CanonicalDecision, RiskSnapshot, DecisionTier]:
         """
         Evaluate an event and produce a decision.
+
+        Args:
+            deadline_budget_ms: If set, caps L2 budget to remaining deadline.
 
         Returns:
             (decision, risk_snapshot, actual_tier)
@@ -108,7 +112,7 @@ class L1PolicyEngine:
 
         if self._should_run_l2(event, context, l1_snapshot, requested_tier):
             try:
-                snapshot = self._run_l2_analysis(event, context, l1_snapshot)
+                snapshot = self._run_l2_analysis(event, context, l1_snapshot, deadline_budget_ms)
                 decision = self._decide(event, snapshot)
                 actual_tier = DecisionTier.L2
             except Exception:
@@ -261,6 +265,7 @@ class L1PolicyEngine:
         event: CanonicalEvent,
         context: Optional[DecisionContext],
         l1_snapshot: RiskSnapshot,
+        deadline_budget_ms: float | None = None,
     ) -> RiskSnapshot:
         # Run async analyzer synchronously
         try:
@@ -269,6 +274,8 @@ class L1PolicyEngine:
             loop = None
 
         budget = self._config.l2_budget_ms
+        if deadline_budget_ms is not None:
+            budget = min(budget, deadline_budget_ms)
         timeout_sec = budget / 1000.0
 
         if loop and loop.is_running():

@@ -2,6 +2,22 @@
 
 本文件记录 ClawSentry 各版本的重要变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.2.2] — 2026-03-26
+
+### 修复
+
+#### Issue Batch 2026-03-26（3 High defects + 6 tests）
+- **[CS-008]** `CompositeAnalyzer.analyze()` 返回 `L2Result` 时遗漏 `trace=best.trace`，导致 L3 trace 始终为 NULL 无法落库
+- **[CS-009]** `policy_engine.evaluate()` L2 budget 不受请求 `deadline_ms` 约束，高延迟场景触发 `DEADLINE_EXCEEDED` — 新增 `deadline_budget_ms` 参数，以 `min(config, remaining)` 为上限
+- **[CS-010]** `_build_openclaw_runtime()` 遗漏 `enforcement_enabled`/`openclaw_ws_url`/`openclaw_operator_token` 三字段，导致 WS 可用时 `/ahp/resolve` 仍返回 502
+- **[CS-007]** LLM 超时日志改善：区分 `TimeoutError` 与其他 provider error，便于调参调试（WONTFIX，设计如此）
+
+#### 测试新增
+- 6 个新测试覆盖：trace 传递 / deadline budget 限制 / enforcement 参数穿透
+- 测试总量：1271 → 1277（+6 tests）
+
+---
+
 ## [0.2.1] — 2026-03-25
 
 ### 修复

@@ -258,6 +258,19 @@ class LLMAnalyzer:
                 timeout=timeout / 1000,
             )
             return self._parse_response(raw, l1_snapshot, start)
+        except (asyncio.TimeoutError, TimeoutError):
+            logger.warning(
+                "LLM analysis timed out (budget=%.0fms); falling back to L1",
+                timeout,
+            )
+            elapsed_ms = (time.monotonic() - start) * 1000
+            return L2Result(
+                target_level=l1_snapshot.risk_level,
+                reasons=["LLM analysis timed out; falling back to L1"],
+                confidence=0.0,
+                analyzer_id=self.analyzer_id,
+                latency_ms=round(elapsed_ms, 3),
+            )
         except Exception:
             logger.warning("LLM analysis failed; falling back to L1", exc_info=True)
             elapsed_ms = (time.monotonic() - start) * 1000
@@ -385,4 +398,5 @@ class CompositeAnalyzer:
             confidence=best.confidence,
             analyzer_id=best.analyzer_id,
             latency_ms=round(elapsed_ms, 3),
+            trace=best.trace,
         )
