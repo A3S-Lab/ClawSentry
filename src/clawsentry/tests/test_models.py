@@ -353,7 +353,7 @@ class TestSyncDecisionRequest:
         with pytest.raises(ValidationError):
             SyncDecisionRequest(
                 request_id="req-001",
-                deadline_ms=6000,
+                deadline_ms=120001,
                 decision_tier=DecisionTier.L1,
                 event=CanonicalEvent(**_minimal_event()),
             )

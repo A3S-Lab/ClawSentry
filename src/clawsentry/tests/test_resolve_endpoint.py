@@ -104,8 +104,8 @@ class TestResolveEndpoint:
         assert resp.status_code == 400
 
     @pytest.mark.asyncio
-    async def test_resolve_returns_502_when_ws_unavailable(self, gateway):
-        """When resolve() returns False (WS down), endpoint should return 502."""
+    async def test_resolve_returns_503_when_ws_unavailable(self, gateway):
+        """When resolve() returns False (WS down), endpoint should return 503."""
         client = AsyncMock()
         client.resolve = AsyncMock(return_value=False)
         app = create_http_app(gateway)
@@ -118,7 +118,7 @@ class TestResolveEndpoint:
                 "approval_id": "ap-ws-down",
                 "decision": "allow-once",
             })
-        assert resp.status_code == 502
+        assert resp.status_code == 503
         assert "not delivered" in resp.json()["error"]
 
     @pytest.mark.asyncio

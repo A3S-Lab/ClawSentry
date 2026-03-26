@@ -104,6 +104,7 @@ def build_analyzer_from_env(
                 toolkit=toolkit,
                 skill_registry=skill_registry,
                 config=agent_config,
+                trajectory_store=trajectory_store,
             )
             analyzers.append(agent)
             logger.info("L3 AgentAnalyzer enabled")

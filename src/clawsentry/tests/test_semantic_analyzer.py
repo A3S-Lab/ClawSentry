@@ -681,3 +681,79 @@ class TestEventTextTruncationUtf8Safety:
         evt = _evt(tool_name="bash", payload={"content": big_chinese})
         text = event_text(evt)
         assert len(text) <= _MAX_EVENT_TEXT_LEN
+
+
+# ---------- CS-015: L3 trace propagation ----------
+
+
+@pytest.mark.asyncio
+async def test_composite_preserves_l3_trace_from_degraded_analyzer():
+    """CS-015: L3 trace must be preserved even when AgentAnalyzer degrades."""
+    from clawsentry.gateway.semantic_analyzer import CompositeAnalyzer, L2Result
+
+    class FakeRuleBased:
+        analyzer_id = "rule"
+        async def analyze(self, event, context, snapshot, budget):
+            return L2Result(
+                target_level=RiskLevel.MEDIUM,
+                reasons=["rule-based detection"],
+                confidence=0.9,
+                analyzer_id="rule",
+            )
+
+    class FakeAgentL3:
+        analyzer_id = "agent-l3"
+        async def analyze(self, event, context, snapshot, budget):
+            return L2Result(
+                target_level=RiskLevel.LOW,
+                reasons=["l3-degraded"],
+                confidence=0.0,  # Degraded
+                analyzer_id="agent-l3",
+                trace={"trigger_reason": "triggered", "degraded": True, "steps": []},
+            )
+
+    comp = CompositeAnalyzer([FakeRuleBased(), FakeAgentL3()])
+    snapshot = _snap(risk_level=RiskLevel.LOW, score=0.2)
+    result = await comp.analyze(None, None, snapshot, 5000)
+
+    # Rule-based should win on risk level
+    assert result.target_level == RiskLevel.MEDIUM
+    # But L3 trace MUST be preserved
+    assert result.trace is not None, "CS-015: L3 trace must be propagated even from degraded analyzer"
+    assert result.trace["trigger_reason"] == "triggered"
+
+
+@pytest.mark.asyncio
+async def test_composite_preserves_l3_trace_when_all_degraded():
+    """CS-015: L3 trace preserved even when all analyzers degrade."""
+    from clawsentry.gateway.semantic_analyzer import CompositeAnalyzer, L2Result
+
+    class FakeDegraded1:
+        analyzer_id = "degraded1"
+        async def analyze(self, event, context, snapshot, budget):
+            return L2Result(
+                target_level=RiskLevel.LOW,
+                reasons=["degraded"],
+                confidence=0.0,
+                analyzer_id="degraded1",
+            )
+
+    class FakeDegraded2:
+        analyzer_id = "agent-l3"
+        async def analyze(self, event, context, snapshot, budget):
+            return L2Result(
+                target_level=RiskLevel.LOW,
+                reasons=["l3-degraded"],
+                confidence=0.0,
+                analyzer_id="agent-l3",
+                trace={"trigger_reason": "not_matched", "degraded": True},
+            )
+
+    comp = CompositeAnalyzer([FakeDegraded1(), FakeDegraded2()])
+    snapshot = _snap(risk_level=RiskLevel.LOW, score=0.2)
+    result = await comp.analyze(None, None, snapshot, 5000)
+
+    # All degraded -> falls back to L1
+    assert result.confidence == 0.0
+    # But L3 trace should still be present
+    assert result.trace is not None, "CS-015: L3 trace must survive even when all analyzers degrade"

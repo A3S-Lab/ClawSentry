@@ -241,7 +241,7 @@ def add_resolve_endpoint(app, approval_client):
         if not ok:
             return JSONResponse(
                 {"error": "resolve was not delivered (WS unavailable or rejected)"},
-                status_code=502,
+                status_code=503,
             )
 
         return JSONResponse({"status": "ok", "approval_id": approval_id})

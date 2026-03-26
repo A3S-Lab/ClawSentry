@@ -404,7 +404,7 @@ class SyncDecisionRequest(BaseModel):
     """
     rpc_version: str = Field(default=RPC_VERSION)
     request_id: str = Field(..., min_length=1)
-    deadline_ms: int = Field(..., gt=0, le=5000)  # Hard upper limit 5000ms
+    deadline_ms: int = Field(..., gt=0, le=120000)  # Hard upper limit 120s (L3 needs LLM round-trips on slow providers)
     decision_tier: DecisionTier
     event: CanonicalEvent
     context: Optional[DecisionContext] = None

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -41,8 +42,8 @@ _ALLOWED_TOOL_CALLS: dict[str, str] = {
 
 @dataclass
 class AgentAnalyzerConfig:
-    provider_timeout_ms: float = 20_000.0
-    hard_cap_ms: float = 30_000.0
+    provider_timeout_ms: float = 120_000.0
+    hard_cap_ms: float = 120_000.0
     l3_budget_ms: Optional[float] = None  # User-configurable L3 budget; None = use passed budget
     max_reasoning_turns: int = 8
     initial_trajectory_limit: int = 20
@@ -60,12 +61,14 @@ class AgentAnalyzer:
         skill_registry: SkillRegistry,
         trigger_policy: Optional[L3TriggerPolicy] = None,
         config: Optional[AgentAnalyzerConfig] = None,
+        trajectory_store: Any = None,
     ) -> None:
         self._provider = provider
         self._toolkit = toolkit
         self._skill_registry = skill_registry
         self._trigger_policy = trigger_policy or L3TriggerPolicy()
         self._config = config or AgentAnalyzerConfig()
+        self._trajectory_store = trajectory_store
 
     @property
     def analyzer_id(self) -> str:
@@ -107,7 +110,17 @@ class AgentAnalyzer:
         start = time.monotonic()
         self._toolkit.reset_budget()
 
-        if not self._trigger_policy.should_trigger(event, context, l1_snapshot, []):
+        # Fetch session risk history for cumulative trigger evaluation
+        session_risk_history: list = []
+        if self._trajectory_store is not None and event.session_id:
+            try:
+                session_risk_history = self._trajectory_store.replay_session(
+                    event.session_id, limit=50
+                )
+            except Exception:
+                pass  # Degrade gracefully; empty history = stricter trigger threshold
+
+        if not self._trigger_policy.should_trigger(event, context, l1_snapshot, session_risk_history):
             result = self._degraded(l1_snapshot, start, "L3 trigger not matched")
             trace = self._build_trace(
                 trigger_reason="trigger_not_matched",
@@ -129,7 +142,7 @@ class AgentAnalyzer:
             )
             base_budget = self._config.l3_budget_ms if self._config.l3_budget_ms is not None else budget_ms
             effective_budget = min(
-                base_budget, self._config.provider_timeout_ms, self._config.hard_cap_ms
+                base_budget, budget_ms, self._config.provider_timeout_ms, self._config.hard_cap_ms
             )
 
             if self._config.enable_multi_turn:
@@ -140,7 +153,7 @@ class AgentAnalyzer:
                 return await self._run_single_turn(
                     event, l1_snapshot, skill, trajectory, effective_budget, start
                 )
-        except Exception:
+        except (Exception, asyncio.CancelledError):
             result = self._degraded(
                 l1_snapshot, start,
                 "L3 analysis degraded; falling back to prior risk assessment",
@@ -161,6 +174,15 @@ class AgentAnalyzer:
     # ------------------------------------------------------------------
     # Single-turn (MVP)
     # ------------------------------------------------------------------
+
+    # Minimum remaining budget (ms) required to attempt a format-correction retry
+    _FORMAT_RETRY_MIN_BUDGET_MS: float = 3000.0
+
+    _FORMAT_CORRECTION_PROMPT: str = (
+        "Your previous response could not be parsed. "
+        "Respond with ONLY a JSON object (no markdown, no explanation) in this exact format:\n"
+        '{"risk_level": "low|medium|high|critical", "findings": ["short finding"], "confidence": 0.8}'
+    )
 
     async def _run_single_turn(
         self,
@@ -194,6 +216,35 @@ class AgentAnalyzer:
             "response_raw": raw,
             "latency_ms": round(llm_latency, 3),
         }]
+
+        # Format-correction retry: if first parse degraded and budget allows
+        if result.confidence == 0.0:
+            remaining_ms = effective_budget - (time.monotonic() - start) * 1000
+            if remaining_ms >= self._FORMAT_RETRY_MIN_BUDGET_MS:
+                try:
+                    retry_start = time.monotonic()
+                    retry_raw = await asyncio.wait_for(
+                        self._provider.complete(
+                            skill.system_prompt,
+                            self._FORMAT_CORRECTION_PROMPT,
+                            timeout_ms=remaining_ms,
+                            max_tokens=256,
+                        ),
+                        timeout=remaining_ms / 1000,
+                    )
+                    retry_latency = (time.monotonic() - retry_start) * 1000
+                    retry_result = self._parse_final_response(retry_raw, l1_snapshot, start)
+                    turns.append({
+                        "turn": 2,
+                        "type": "format_retry",
+                        "prompt_length": len(self._FORMAT_CORRECTION_PROMPT),
+                        "response_raw": retry_raw,
+                        "latency_ms": round(retry_latency, 3),
+                    })
+                    if retry_result.confidence > 0.0:
+                        result = retry_result
+                except (asyncio.TimeoutError, Exception):
+                    pass  # Retry failed; keep original degraded result
 
         final_verdict: Optional[dict] = None
         if result.confidence > 0.0:
@@ -468,6 +519,76 @@ class AgentAnalyzer:
         except (json.JSONDecodeError, TypeError):
             return None
 
+    # Mapping of non-standard risk level strings to RiskLevel values
+    _RISK_LEVEL_ALIASES: dict[str, RiskLevel] = {
+        "none": RiskLevel.LOW,
+        "safe": RiskLevel.LOW,
+        "informational": RiskLevel.LOW,
+        "info": RiskLevel.LOW,
+        "minor": RiskLevel.LOW,
+        "moderate": RiskLevel.MEDIUM,
+        "warning": RiskLevel.MEDIUM,
+        "severe": RiskLevel.HIGH,
+        "danger": RiskLevel.HIGH,
+        "dangerous": RiskLevel.CRITICAL,
+        "fatal": RiskLevel.CRITICAL,
+    }
+
+    # Regex to strip markdown code block wrappers
+    _MARKDOWN_CODE_BLOCK_RE = re.compile(
+        r"^\s*```(?:json)?\s*\n?(.*?)\n?\s*```\s*$", re.DOTALL
+    )
+
+    @staticmethod
+    def _strip_markdown(raw: str) -> str:
+        """Strip markdown code block wrappers (```json ... ```)."""
+        m = AgentAnalyzer._MARKDOWN_CODE_BLOCK_RE.match(raw.strip())
+        return m.group(1).strip() if m else raw.strip()
+
+    @staticmethod
+    def _extract_risk_level_from_data(data: dict) -> str | None:
+        """Search for risk level in common JSON structures."""
+        # Direct field: {"risk_level": "high"}
+        if "risk_level" in data:
+            return str(data["risk_level"]).lower()
+        # Nested: {"risk_assessment": {"level": "high"}}
+        for key in ("risk_assessment", "risk", "assessment", "result"):
+            nested = data.get(key)
+            if isinstance(nested, dict):
+                for field in ("level", "risk_level", "severity", "risk"):
+                    if field in nested:
+                        return str(nested[field]).lower()
+        # Top-level "level" or "severity"
+        for field in ("level", "severity", "risk"):
+            if field in data:
+                return str(data[field]).lower()
+        return None
+
+    @staticmethod
+    def _extract_findings_from_data(data: dict) -> list[str]:
+        """Search for findings/reasons in common JSON structures."""
+        for key in ("findings", "reasons", "issues", "concerns", "analysis"):
+            val = data.get(key)
+            if isinstance(val, list):
+                return [str(item) for item in val]
+            if isinstance(val, str):
+                return [val]
+            if isinstance(val, dict):
+                # e.g. {"analysis": {"description": "..."}}
+                desc = val.get("description") or val.get("summary") or val.get("detail")
+                if desc:
+                    return [str(desc)]
+        return []
+
+    def _resolve_risk_level(self, raw_level: str | None) -> RiskLevel | None:
+        """Resolve a raw risk level string to RiskLevel, handling aliases."""
+        if raw_level is None:
+            return None
+        try:
+            return RiskLevel(raw_level)
+        except ValueError:
+            return self._RISK_LEVEL_ALIASES.get(raw_level)
+
     def _parse_final_response(
         self,
         raw: str,
@@ -476,12 +597,18 @@ class AgentAnalyzer:
     ) -> L2Result:
         elapsed_ms = (time.monotonic() - start) * 1000
         try:
-            data = json.loads(raw)
-            risk_level = RiskLevel(str(data.get("risk_level", "")).lower())
-            findings = data.get("findings", [])
-            if not isinstance(findings, list):
-                findings = [str(findings)]
-            confidence = float(data.get("confidence", 0.0))
+            cleaned = self._strip_markdown(raw)
+            data = json.loads(cleaned)
+            if not isinstance(data, dict):
+                raise ValueError("LLM response is not a JSON object")
+
+            raw_level = self._extract_risk_level_from_data(data)
+            risk_level = self._resolve_risk_level(raw_level)
+            if risk_level is None:
+                raise ValueError(f"Cannot resolve risk_level from '{raw_level}'")
+
+            findings = self._extract_findings_from_data(data)
+            confidence = float(data.get("confidence", 0.7))
             confidence = max(0.0, min(1.0, confidence))
             target_level = _max_risk_level(risk_level, l1_snapshot.risk_level)
             return L2Result(

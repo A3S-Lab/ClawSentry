@@ -45,6 +45,10 @@ from .semantic_analyzer import (
 # recording, response building, and thread-pool teardown after L2 analysis.
 _L2_OVERHEAD_MARGIN_MS: float = 200.0
 
+# Inner margin (ms) subtracted from the analyzer budget so analyzers can
+# degrade gracefully (producing traces/results) before the outer timeout fires.
+_INNER_BUDGET_MARGIN_MS: float = 300.0
+
 
 def _build_min_score_map(config: DetectionConfig) -> dict[RiskLevel, float]:
     return {
@@ -284,6 +288,9 @@ class L1PolicyEngine:
         if deadline_budget_ms is not None:
             budget = min(budget, max(0, deadline_budget_ms - _L2_OVERHEAD_MARGIN_MS))
         timeout_sec = budget / 1000.0
+        # Give analyzers slightly less budget than the outer timeout so they
+        # can degrade gracefully (producing traces) before being cancelled.
+        inner_budget = max(budget - _INNER_BUDGET_MARGIN_MS, 0.0)
 
         if loop and loop.is_running():
             pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -291,7 +298,7 @@ class L1PolicyEngine:
                 result = pool.submit(
                     asyncio.run,
                     asyncio.wait_for(
-                        self._analyzer.analyze(event, context, l1_snapshot, budget),
+                        self._analyzer.analyze(event, context, l1_snapshot, inner_budget),
                         timeout=timeout_sec,
                     ),
                 ).result(timeout=timeout_sec + 0.5)  # outer timeout as safety net
@@ -301,7 +308,7 @@ class L1PolicyEngine:
         else:
             async def _run_with_timeout() -> L2Result:
                 return await asyncio.wait_for(
-                    self._analyzer.analyze(event, context, l1_snapshot, budget),
+                    self._analyzer.analyze(event, context, l1_snapshot, inner_budget),
                     timeout=timeout_sec,
                 )
             result = asyncio.run(_run_with_timeout())

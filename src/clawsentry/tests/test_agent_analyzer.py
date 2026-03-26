@@ -364,3 +364,243 @@ def test_multi_turn_trace_records_tool_calls(tmp_path: Path):
     assert turns[2]["type"] == "llm_call"
     assert result.trace["tool_calls_used"] == 1
     assert result.trace["final_verdict"]["risk_level"] == "critical"
+
+
+class HighRiskHistoryStore:
+    """Trajectory store returning enough HIGH risk history to trigger L3 via cumulative score."""
+    def replay_session(self, session_id, limit=100):
+        # 3 HIGH events (score 2 each = 6) exceeds _CUMULATIVE_THRESHOLD=5
+        return [
+            {"event": {"tool_name": "bash"}, "decision": {"risk_level": "high"}, "recorded_at": "2026-03-26T01:00:00+00:00"},
+            {"event": {"tool_name": "bash"}, "decision": {"risk_level": "high"}, "recorded_at": "2026-03-26T01:01:00+00:00"},
+            {"event": {"tool_name": "bash"}, "decision": {"risk_level": "high"}, "recorded_at": "2026-03-26T01:02:00+00:00"},
+        ]
+
+
+def test_l3_triggers_via_cumulative_session_history(tmp_path: Path):
+    """L3 should trigger when session risk history cumulative score >= threshold,
+    even without manual l3_escalate flag."""
+    provider = MagicMock()
+    provider.provider_id = "mock-llm"
+    provider.complete = AsyncMock(
+        return_value='{"risk_level": "critical", "findings": ["cumulative risk triggered L3"], "confidence": 0.88}'
+    )
+    store = HighRiskHistoryStore()
+    toolkit = ReadOnlyToolkit(tmp_path, store)
+    registry = SkillRegistry(_skills_dir(tmp_path))
+    analyzer = AgentAnalyzer(
+        provider=provider,
+        toolkit=toolkit,
+        skill_registry=registry,
+        trigger_policy=L3TriggerPolicy(),
+        config=AgentAnalyzerConfig(enable_multi_turn=False),
+        trajectory_store=store,
+    )
+
+    result = asyncio.run(
+        analyzer.analyze(
+            _evt(tool_name="bash", payload={"command": "cat /etc/shadow"},
+                 risk_hints=["credential_exfiltration"]),
+            DecisionContext(),  # No manual l3_escalate flag
+            _snap(RiskLevel.HIGH),
+            5000,
+        )
+    )
+
+    # L3 should have triggered via cumulative score, not degraded
+    assert result.confidence > 0.0, f"Expected L3 to trigger but got confidence=0.0, reasons={result.reasons}"
+    assert result.trace is not None
+    assert result.trace["degraded"] is False
+    assert result.trace["trigger_reason"] == "triggered"
+
+
+def test_l3_degrades_without_trajectory_store(tmp_path: Path):
+    """Without trajectory_store, AgentAnalyzer should still work (degrade gracefully)."""
+    provider = MagicMock()
+    provider.provider_id = "mock-llm"
+    provider.complete = AsyncMock(return_value='{}')
+    toolkit = ReadOnlyToolkit(tmp_path, StubTrajectoryStore())
+    registry = SkillRegistry(_skills_dir(tmp_path))
+    analyzer = AgentAnalyzer(
+        provider=provider,
+        toolkit=toolkit,
+        skill_registry=registry,
+        trigger_policy=L3TriggerPolicy(),
+        config=AgentAnalyzerConfig(enable_multi_turn=False),
+        # No trajectory_store — backward compatible
+    )
+
+    result = asyncio.run(
+        analyzer.analyze(
+            _evt(tool_name="read_file", risk_hints=[]),
+            DecisionContext(),
+            _snap(RiskLevel.MEDIUM),
+            3000,
+        )
+    )
+    # Should degrade gracefully — same behavior as before
+    assert result.confidence == 0.0
+    assert result.trace["degraded"] is True
+
+
+# ---------------------------------------------------------------------------
+# Robust parsing + format-correction retry tests
+# ---------------------------------------------------------------------------
+
+
+def test_parse_markdown_wrapped_json(tmp_path: Path):
+    """LLM response wrapped in ```json ... ``` should be parsed correctly."""
+    markdown_response = '```json\n{"risk_level": "high", "findings": ["credential leak"], "confidence": 0.85}\n```'
+    provider = MagicMock()
+    provider.provider_id = "mock-llm"
+    provider.complete = AsyncMock(return_value=markdown_response)
+    toolkit = ReadOnlyToolkit(tmp_path, StubTrajectoryStore())
+    registry = SkillRegistry(_skills_dir(tmp_path))
+    analyzer = AgentAnalyzer(
+        provider=provider,
+        toolkit=toolkit,
+        skill_registry=registry,
+        trigger_policy=L3TriggerPolicy(),
+        config=AgentAnalyzerConfig(enable_multi_turn=False),
+    )
+
+    result = asyncio.run(
+        analyzer.analyze(
+            _evt(tool_name="bash", payload={"command": "cat token"},
+                 risk_hints=["credential_exfiltration"]),
+            DecisionContext(session_risk_summary={"l3_escalate": True}),
+            _snap(RiskLevel.MEDIUM),
+            5000,
+        )
+    )
+    assert result.confidence == 0.85
+    assert result.target_level == RiskLevel.HIGH
+    assert "credential leak" in result.reasons
+    assert result.trace["degraded"] is False
+
+
+def test_parse_nested_risk_assessment_structure(tmp_path: Path):
+    """LLM response with nested risk_assessment.level should be parsed."""
+    nested_response = '{"risk_assessment": {"level": "high", "score": 8}, "analysis": {"description": "dangerous command"}, "confidence": 0.9}'
+    provider = MagicMock()
+    provider.provider_id = "mock-llm"
+    provider.complete = AsyncMock(return_value=nested_response)
+    toolkit = ReadOnlyToolkit(tmp_path, StubTrajectoryStore())
+    registry = SkillRegistry(_skills_dir(tmp_path))
+    analyzer = AgentAnalyzer(
+        provider=provider,
+        toolkit=toolkit,
+        skill_registry=registry,
+        trigger_policy=L3TriggerPolicy(),
+        config=AgentAnalyzerConfig(enable_multi_turn=False),
+    )
+
+    result = asyncio.run(
+        analyzer.analyze(
+            _evt(tool_name="bash", payload={"command": "rm -rf /"},
+                 risk_hints=["credential_exfiltration"]),
+            DecisionContext(session_risk_summary={"l3_escalate": True}),
+            _snap(RiskLevel.MEDIUM),
+            5000,
+        )
+    )
+    assert result.confidence == 0.9
+    assert result.target_level == RiskLevel.HIGH
+    assert "dangerous command" in result.reasons
+
+
+def test_parse_risk_level_aliases(tmp_path: Path):
+    """Non-standard risk level names (none, severe, etc.) should be mapped."""
+    alias_response = '{"risk_level": "none", "findings": ["safe operation"], "confidence": 0.95}'
+    provider = MagicMock()
+    provider.provider_id = "mock-llm"
+    provider.complete = AsyncMock(return_value=alias_response)
+    toolkit = ReadOnlyToolkit(tmp_path, StubTrajectoryStore())
+    registry = SkillRegistry(_skills_dir(tmp_path))
+    analyzer = AgentAnalyzer(
+        provider=provider,
+        toolkit=toolkit,
+        skill_registry=registry,
+        trigger_policy=L3TriggerPolicy(),
+        config=AgentAnalyzerConfig(enable_multi_turn=False),
+    )
+
+    result = asyncio.run(
+        analyzer.analyze(
+            _evt(tool_name="bash", payload={"command": "echo hi"},
+                 risk_hints=["credential_exfiltration"]),
+            DecisionContext(session_risk_summary={"l3_escalate": True}),
+            _snap(RiskLevel.MEDIUM),
+            5000,
+        )
+    )
+    # "none" maps to LOW, but _max_risk_level with l1=MEDIUM → MEDIUM
+    assert result.confidence == 0.95
+    assert result.target_level == RiskLevel.MEDIUM
+
+
+def test_format_correction_retry_on_unparseable_response(tmp_path: Path):
+    """When first response is unparseable and budget remains, retry with correction prompt."""
+    bad_response = "I think this command is safe because it just echoes text."
+    good_response = '{"risk_level": "low", "findings": ["benign echo"], "confidence": 0.9}'
+    provider = MagicMock()
+    provider.provider_id = "mock-llm"
+    provider.complete = AsyncMock(side_effect=[bad_response, good_response])
+    toolkit = ReadOnlyToolkit(tmp_path, StubTrajectoryStore())
+    registry = SkillRegistry(_skills_dir(tmp_path))
+    analyzer = AgentAnalyzer(
+        provider=provider,
+        toolkit=toolkit,
+        skill_registry=registry,
+        trigger_policy=L3TriggerPolicy(),
+        config=AgentAnalyzerConfig(enable_multi_turn=False),
+    )
+
+    result = asyncio.run(
+        analyzer.analyze(
+            _evt(tool_name="bash", payload={"command": "echo hello"},
+                 risk_hints=["credential_exfiltration"]),
+            DecisionContext(session_risk_summary={"l3_escalate": True}),
+            _snap(RiskLevel.MEDIUM),
+            10000,  # Enough budget for retry
+        )
+    )
+    # Retry should succeed
+    assert result.confidence == 0.9
+    assert "benign echo" in result.reasons
+    assert provider.complete.call_count == 2
+    # Trace should record both turns
+    assert result.trace is not None
+    assert len(result.trace["turns"]) == 2
+    assert result.trace["turns"][1]["type"] == "format_retry"
+
+
+def test_no_format_retry_when_budget_exhausted(tmp_path: Path):
+    """No retry when remaining budget is below _FORMAT_RETRY_MIN_BUDGET_MS."""
+    bad_response = "Not JSON at all"
+    provider = MagicMock()
+    provider.provider_id = "mock-llm"
+    provider.complete = AsyncMock(return_value=bad_response)
+    toolkit = ReadOnlyToolkit(tmp_path, StubTrajectoryStore())
+    registry = SkillRegistry(_skills_dir(tmp_path))
+    analyzer = AgentAnalyzer(
+        provider=provider,
+        toolkit=toolkit,
+        skill_registry=registry,
+        trigger_policy=L3TriggerPolicy(),
+        config=AgentAnalyzerConfig(enable_multi_turn=False, provider_timeout_ms=500),
+    )
+
+    result = asyncio.run(
+        analyzer.analyze(
+            _evt(tool_name="bash", payload={"command": "echo"},
+                 risk_hints=["credential_exfiltration"]),
+            DecisionContext(session_risk_summary={"l3_escalate": True}),
+            _snap(RiskLevel.MEDIUM),
+            1000,  # Small budget — no room for retry
+        )
+    )
+    # Should degrade without retry
+    assert result.confidence == 0.0
+    assert result.trace["degraded"] is True
+    assert provider.complete.call_count == 1  # Only initial call, no retry

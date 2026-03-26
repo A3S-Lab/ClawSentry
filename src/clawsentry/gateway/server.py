@@ -834,9 +834,11 @@ class EventBus:
 
     MAX_SUBSCRIBERS = 100
     MAX_QUEUE_SIZE = 500
+    REPLAY_BUFFER_SIZE = 50
 
     def __init__(self) -> None:
         self._subscribers: dict[str, dict[str, Any]] = {}
+        self._replay_buffer: deque = deque(maxlen=self.REPLAY_BUFFER_SIZE)
 
     def subscribe(
         self,
@@ -850,12 +852,22 @@ class EventBus:
 
         subscriber_id = f"sub-{uuid.uuid4().hex}"
         queue: asyncio.Queue = asyncio.Queue(maxsize=self.MAX_QUEUE_SIZE)
-        self._subscribers[subscriber_id] = {
+        subscriber = {
             "queue": queue,
             "session_id": session_id,
             "min_risk": min_risk,
             "event_types": event_types or {"decision", "session_risk_change", "session_start", "session_enforcement_change", "post_action_finding", "trajectory_alert", "pattern_evolved"},
         }
+        self._subscribers[subscriber_id] = subscriber
+
+        # Replay recent events to new subscriber
+        for event in self._replay_buffer:
+            if self._matches(subscriber, event):
+                try:
+                    queue.put_nowait(event)
+                except asyncio.QueueFull:
+                    break
+
         return subscriber_id, queue
 
     def unsubscribe(self, subscriber_id: str) -> None:
@@ -874,6 +886,7 @@ class EventBus:
         return True
 
     def broadcast(self, event: dict[str, Any]) -> None:
+        self._replay_buffer.append(event)
         for sub_id, subscriber in list(self._subscribers.items()):
             if not self._matches(subscriber, event):
                 continue
@@ -1224,30 +1237,10 @@ class SupervisionGateway:
                     }
                 )
 
-        # Check if we exceeded deadline (after recording, so audit trail is intact)
-        if time.monotonic() > deadline_at:
-            error_resp = SyncDecisionErrorResponse(
-                request_id=req.request_id,
-                rpc_error_code=RPCErrorCode.DEADLINE_EXCEEDED,
-                rpc_error_message=f"Decision took longer than deadline_ms={req.deadline_ms}",
-                retry_eligible=True,
-                retry_after_ms=50,
-                fallback_decision=decision,
-            )
-            return self._jsonrpc_error_with_data(rpc_id, -32604, error_resp)
-
-        # Build success response
-        resp = SyncDecisionResponse(
-            request_id=req.request_id,
-            decision=decision,
-            actual_tier=actual_tier,
-            served_at=utc_now_iso(),
-        )
-        resp_dict = resp.model_dump(mode="json")
-
-        # Cache response
-        self.idempotency_cache.put(req.request_id, resp_dict, req.deadline_ms)
-
+        # --- CS-013/CS-016: SSE broadcasts BEFORE deadline check ---
+        # Event broadcasts must happen unconditionally so that watch CLI and
+        # /report/stream subscribers always receive events, even when the
+        # request exceeds its deadline.
         current_risk_level = str(snapshot_dict.get("risk_level") or decision_dict.get("risk_level") or "low")
         occurred_at = str(event_dict.get("occurred_at") or utc_now_iso())
 
@@ -1388,6 +1381,31 @@ class SupervisionGateway:
                 )
             except Exception:
                 logger.warning("evolved pattern extraction failed", exc_info=True)
+
+        # Check if we exceeded deadline (after recording + broadcasts, so
+        # audit trail and SSE events are intact)
+        if time.monotonic() > deadline_at:
+            error_resp = SyncDecisionErrorResponse(
+                request_id=req.request_id,
+                rpc_error_code=RPCErrorCode.DEADLINE_EXCEEDED,
+                rpc_error_message=f"Decision took longer than deadline_ms={req.deadline_ms}",
+                retry_eligible=True,
+                retry_after_ms=50,
+                fallback_decision=decision,
+            )
+            return self._jsonrpc_error_with_data(rpc_id, -32604, error_resp)
+
+        # Build success response
+        resp = SyncDecisionResponse(
+            request_id=req.request_id,
+            decision=decision,
+            actual_tier=actual_tier,
+            served_at=utc_now_iso(),
+        )
+        resp_dict = resp.model_dump(mode="json")
+
+        # Cache response
+        self.idempotency_cache.put(req.request_id, resp_dict, req.deadline_ms)
 
         return self._jsonrpc_success(rpc_id, resp_dict)
 

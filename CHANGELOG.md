@@ -2,6 +2,37 @@
 
 本文件记录 ClawSentry 各版本的重要变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.2.4] — 2026-03-26
+
+### 修复
+
+#### Issue Batch 2026-03-26-3（CS-013~CS-018, 6 Issues + L3 增强）
+- **[CS-013]** `clawsentry watch` 无 decision 事件 — SSE 广播移到 deadline 检查之前
+- **[CS-014]** `/ahp/resolve` WS 不可用返回 502 而非 503 — 修正 `stack.py` status_code
+- **[CS-015]** L3 trace 未持久化 — 三层修复：CompositeAnalyzer 保留降级 trace / AgentAnalyzer 接入 trajectory_store 累积触发 / inner budget margin 防止外层 timeout 取消 trace
+- **[CS-016]** `/report/stream` 无事件 — 同 CS-013 根因，同一修复
+- **[CS-017]** 轨迹告警缺失 — EventBus 新增 50 条 replay buffer
+- **[CS-018]** `pattern_evolved` 无事件 — 同 CS-017 根因，同一修复
+
+### 新增
+
+#### L3 AgentAnalyzer 健壮性增强
+- **健壮 LLM 响应解析**：自动剥离 markdown 代码块包裹 / 递归搜索嵌套 JSON 结构 (`risk_assessment.level`) / 映射非标风险等级别名 (`none`→LOW, `severe`→HIGH 等)
+- **格式修正重试**：首次解析失败且剩余 budget ≥ 3s 时，自动发送格式修正 prompt 重试
+- **`asyncio.CancelledError` 安全网**：Python 3.9+ 中 CancelledError 为 BaseException，确保任何超时场景下 L3 trace 都能保存
+- **`deadline_ms` 上限提升至 120s**：适配 L3 多轮 LLM 调用 + 慢速 provider 场景
+- **AgentAnalyzer budget 修正**：`effective_budget` 正确纳入 caller 传入的 `budget_ms`，使 inner margin 机制真正生效
+
+#### 测试新增
+- 15 个新测试：EventBus replay / SSE 广播 / L3 trace 持久化 / 累积触发 / markdown 解析 / 嵌套结构 / 别名映射 / 格式重试 / budget 耗尽无重试
+- 5 个 budget 测试更新适配 inner margin
+- 测试总量：1289 → 1304（+15 tests）
+
+#### 真实环境验证
+- 25/25 checks PASS（100%）：L3 非降级 trace 首次通过（Kimi K2.5 via SiliconFlow, confidence=0.95）
+
+---
+
 ## [0.2.3] — 2026-03-26
 
 ### 修复

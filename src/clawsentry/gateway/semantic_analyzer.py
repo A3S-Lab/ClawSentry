@@ -372,9 +372,15 @@ class CompositeAnalyzer:
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
         valid: list[L2Result] = []
+        l3_trace: Optional[dict] = None  # CS-015: collect L3 trace separately
+
         for r in raw_results:
-            if isinstance(r, L2Result) and r.confidence > 0.0:
-                valid.append(r)
+            if isinstance(r, L2Result):
+                # Preserve L3 trace from any analyzer, even degraded ones
+                if r.trace is not None and l3_trace is None:
+                    l3_trace = r.trace
+                if r.confidence > 0.0:
+                    valid.append(r)
 
         elapsed_ms = (time.monotonic() - start) * 1000
 
@@ -385,6 +391,7 @@ class CompositeAnalyzer:
                 confidence=0.0,
                 analyzer_id=self.analyzer_id,
                 latency_ms=round(elapsed_ms, 3),
+                trace=l3_trace,  # CS-015: attach collected trace
             )
 
         # Pick highest risk level; tie-break by confidence
@@ -398,5 +405,5 @@ class CompositeAnalyzer:
             confidence=best.confidence,
             analyzer_id=best.analyzer_id,
             latency_ms=round(elapsed_ms, 3),
-            trace=best.trace,
+            trace=best.trace or l3_trace,  # CS-015: fallback to collected trace
         )
