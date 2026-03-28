@@ -53,6 +53,18 @@ class DetectionConfig:
     trajectory_max_events: int = 50
     trajectory_max_sessions: int = 10_000
 
+    # --- E-8: External content safety ---
+    external_content_d6_boost: float = 0.3
+    external_content_post_action_multiplier: float = 1.3
+
+    # --- E-8: D4 frequency anomaly detection ---
+    d4_freq_enabled: bool = True
+    d4_freq_burst_count: int = 10
+    d4_freq_burst_window_s: float = 5.0
+    d4_freq_repetitive_count: int = 20
+    d4_freq_repetitive_window_s: float = 60.0
+    d4_freq_rate_limit_per_min: int = 60
+
     # --- E-5: Self-evolving pattern repository ---
     evolving_enabled: bool = False
     evolved_patterns_path: Optional[str] = None
@@ -115,6 +127,13 @@ _ENV_MAP: list[tuple[str, str, type]] = [
     ("CS_TRAJECTORY_MAX_EVENTS", "trajectory_max_events", int),
     ("CS_TRAJECTORY_MAX_SESSIONS", "trajectory_max_sessions", int),
     ("CS_EVOLVED_PATTERNS_PATH", "evolved_patterns_path", str),
+    ("CS_EXTERNAL_CONTENT_D6_BOOST", "external_content_d6_boost", float),
+    ("CS_EXTERNAL_CONTENT_POST_ACTION_MULTIPLIER", "external_content_post_action_multiplier", float),
+    ("CS_D4_FREQ_BURST_COUNT", "d4_freq_burst_count", int),
+    ("CS_D4_FREQ_BURST_WINDOW_S", "d4_freq_burst_window_s", float),
+    ("CS_D4_FREQ_REPETITIVE_COUNT", "d4_freq_repetitive_count", int),
+    ("CS_D4_FREQ_REPETITIVE_WINDOW_S", "d4_freq_repetitive_window_s", float),
+    ("CS_D4_FREQ_RATE_LIMIT_PER_MIN", "d4_freq_rate_limit_per_min", int),
 ]
 
 # Comma-separated list vars handled separately
@@ -157,6 +176,15 @@ def build_detection_config_from_env() -> DetectionConfig:
         overrides["evolving_enabled"] = False
     elif _bool_env:
         logger.warning("Invalid value for CS_EVOLVING_ENABLED=%r, using default (false)", _bool_env)
+
+    # E-8: D4 frequency enabled
+    _freq_env = os.getenv("CS_D4_FREQ_ENABLED", "").strip().lower()
+    if _freq_env in ("1", "true", "yes"):
+        overrides["d4_freq_enabled"] = True
+    elif _freq_env in ("0", "false", "no"):
+        overrides["d4_freq_enabled"] = False
+    elif _freq_env:
+        logger.warning("Invalid value for CS_D4_FREQ_ENABLED=%r, using default (true)", _freq_env)
 
     try:
         return DetectionConfig(**overrides)

@@ -145,6 +145,87 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Use compact format without Unicode box drawing for session groups.",
     )
 
+    # --- audit ---
+    audit_parser = sub.add_parser(
+        "audit",
+        help="Query offline audit logs from trajectory database.",
+    )
+    audit_parser.add_argument(
+        "--db",
+        default=None,
+        help="Database path (default: CS_TRAJECTORY_DB_PATH or /tmp/clawsentry-trajectory.db).",
+    )
+    audit_parser.add_argument(
+        "--session",
+        default=None,
+        help="Filter by session ID.",
+    )
+    audit_parser.add_argument(
+        "--since",
+        default=None,
+        help="Time window (e.g. 1h, 24h, 7d, 30m).",
+    )
+    audit_parser.add_argument(
+        "--risk",
+        default=None,
+        choices=["low", "medium", "high", "critical"],
+        help="Filter by risk level.",
+    )
+    audit_parser.add_argument(
+        "--decision",
+        default=None,
+        choices=["allow", "block", "defer", "modify"],
+        help="Filter by decision verdict.",
+    )
+    audit_parser.add_argument(
+        "--tool",
+        default=None,
+        help="Filter by tool name.",
+    )
+    audit_parser.add_argument(
+        "--format",
+        default="table",
+        choices=["table", "json", "csv"],
+        dest="output_format",
+        help="Output format (default: table).",
+    )
+    audit_parser.add_argument(
+        "--stats",
+        action="store_true",
+        default=False,
+        help="Show aggregate statistics only.",
+    )
+    audit_parser.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        help="Maximum records to return (default: 100).",
+    )
+    audit_parser.add_argument(
+        "--no-color",
+        action="store_true",
+        default=False,
+        help="Disable ANSI colour codes in output.",
+    )
+
+    # --- doctor ---
+    doc_parser = sub.add_parser(
+        "doctor",
+        help="Audit configuration for security issues.",
+    )
+    doc_parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output results as JSON.",
+    )
+    doc_parser.add_argument(
+        "--no-color",
+        action="store_true",
+        default=False,
+        help="Disable ANSI colour codes in output.",
+    )
+
     # --- start ---
     start_parser = sub.add_parser(
         "start",
@@ -238,6 +319,32 @@ def main(argv: list[str] | None = None) -> None:
             no_emoji=args.no_emoji,
             compact=args.compact,
         )
+
+    elif args.command == "audit":
+        from .audit_command import run_audit
+
+        code = run_audit(
+            db_path=args.db,
+            session_id=args.session,
+            since=args.since,
+            risk=args.risk,
+            decision=args.decision,
+            tool=args.tool,
+            fmt=args.output_format,
+            stats_mode=args.stats,
+            limit=args.limit,
+            color=not args.no_color,
+        )
+        sys.exit(code)
+
+    elif args.command == "doctor":
+        from .doctor_command import run_doctor
+
+        code = run_doctor(
+            json_mode=args.json,
+            color=not args.no_color,
+        )
+        sys.exit(code)
 
     elif args.command == "start":
         from .start_command import detect_framework, run_start

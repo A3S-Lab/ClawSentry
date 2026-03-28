@@ -37,6 +37,46 @@ from ..gateway.policy_engine import make_fallback_decision
 logger = logging.getLogger("a3s-adapter")
 
 # ---------------------------------------------------------------------------
+# E-8: Content origin inference
+# ---------------------------------------------------------------------------
+
+_EXTERNAL_TOOLS = frozenset({
+    "http_request", "web_fetch", "fetch", "web_search",
+    "mcp__fetch__fetch",
+})
+_USER_TOOLS = frozenset({
+    "read_file", "write_file", "edit_file", "grep", "glob",
+    "read", "write", "edit",
+})
+_BASH_EXTERNAL_RE = (
+    r"\b(?:curl|wget|http|https://)\b"
+)
+import re as _re
+_BASH_EXTERNAL_PATTERN = _re.compile(_BASH_EXTERNAL_RE, _re.IGNORECASE)
+
+
+def infer_content_origin(tool_name: str | None, payload: dict[str, Any]) -> str:
+    """Infer whether event content originates from external or user sources.
+
+    Returns ``"external"``, ``"user"``, or ``"unknown"``.
+    """
+    tool = (tool_name or "").lower()
+    if tool in _EXTERNAL_TOOLS:
+        return "external"
+    if tool in _USER_TOOLS:
+        # Files in /tmp/ or similar may be external-originated
+        path = str(payload.get("file_path", "") or payload.get("path", "") or "")
+        if path.startswith("/tmp/") or path.startswith("/var/tmp/"):
+            return "external"
+        return "user"
+    if tool in ("bash", "shell", "terminal", "command", "exec"):
+        cmd = str(payload.get("command", ""))
+        if _BASH_EXTERNAL_PATTERN.search(cmd):
+            return "external"
+        return "user"
+    return "unknown"
+
+# ---------------------------------------------------------------------------
 # Hook -> Canonical Event Type Mapping (02 section 4.1.1)
 # ---------------------------------------------------------------------------
 
@@ -234,6 +274,11 @@ class A3SCodeAdapter:
         # Extract risk_hints (shared utility in models.py)
         risk_hints = extract_risk_hints(tool_name, str(payload.get("command", "")))
 
+        # E-8: Inject content origin metadata
+        origin = infer_content_origin(tool_name, payload)
+        enriched_payload = dict(payload)
+        enriched_payload["_clawsentry_meta"] = {"content_origin": origin}
+
         return CanonicalEvent(
             event_id=event_id,
             trace_id=effective_trace_id,
@@ -242,7 +287,7 @@ class A3SCodeAdapter:
             agent_id=effective_agent_id,
             source_framework=self.SOURCE_FRAMEWORK,
             occurred_at=occurred_at,
-            payload=payload,
+            payload=enriched_payload,
             event_subtype=event_subtype,
             tool_name=tool_name,
             risk_hints=risk_hints,

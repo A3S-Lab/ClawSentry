@@ -77,6 +77,12 @@ class L1PolicyEngine:
         self._session_tracker = SessionRiskTracker(
             d4_high_threshold=self._config.d4_high_threshold,
             d4_mid_threshold=self._config.d4_mid_threshold,
+            freq_enabled=self._config.d4_freq_enabled,
+            freq_burst_count=self._config.d4_freq_burst_count,
+            freq_burst_window_s=self._config.d4_freq_burst_window_s,
+            freq_repetitive_count=self._config.d4_freq_repetitive_count,
+            freq_repetitive_window_s=self._config.d4_freq_repetitive_window_s,
+            freq_rate_limit_per_min=self._config.d4_freq_rate_limit_per_min,
         )
         self._min_score_for_level = _build_min_score_map(self._config)
         _evolved = self._config.evolved_patterns_path if self._config.evolving_enabled else None

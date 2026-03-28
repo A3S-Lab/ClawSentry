@@ -301,12 +301,19 @@ def _score_d3(event: CanonicalEvent) -> int:
 
 class SessionRiskTracker:
     """
-    Track per-session risk accumulation for D4 scoring.
+    Track per-session risk accumulation and tool-call frequency for D4 scoring.
 
-    D4 values per 04 section 12.2:
+    D4 values per 04 section 12.2 (accumulation):
       0: session high-risk events < 2
       1: session high-risk events in [2, 5)
       2: session high-risk events >= 5
+
+    E-8 frequency detection (three layers):
+      burst:      same tool >= N times in T seconds → d4=2
+      repetitive: same tool >= N times in T seconds → d4=1
+      rate:       all tools >= N per minute         → d4=1
+
+    Final D4 = min(max(accumulation_d4, frequency_d4), 2).
 
     Bounded: evicts least-recently-used sessions when max_sessions is exceeded.
     """
@@ -318,11 +325,30 @@ class SessionRiskTracker:
         max_sessions: int = DEFAULT_MAX_SESSIONS,
         d4_high_threshold: int = 5,
         d4_mid_threshold: int = 2,
+        # E-8: Frequency detection params
+        freq_enabled: bool = True,
+        freq_burst_count: int = 10,
+        freq_burst_window_s: float = 5.0,
+        freq_repetitive_count: int = 20,
+        freq_repetitive_window_s: float = 60.0,
+        freq_rate_limit_per_min: int = 60,
     ) -> None:
         self._max_sessions = max_sessions
         self._d4_high_threshold = d4_high_threshold
         self._d4_mid_threshold = d4_mid_threshold
         self._high_risk_counts: dict[str, int] = {}
+
+        # E-8: Frequency tracking
+        self._freq_enabled = freq_enabled
+        self._freq_burst_count = freq_burst_count
+        self._freq_burst_window_s = freq_burst_window_s
+        self._freq_repetitive_count = freq_repetitive_count
+        self._freq_repetitive_window_s = freq_repetitive_window_s
+        self._freq_rate_limit_per_min = freq_rate_limit_per_min
+        # Per-session → per-tool → list of timestamps
+        self._tool_calls: dict[str, dict[str, list[float]]] = {}
+        # Per-session → list of all-tool timestamps
+        self._all_calls: dict[str, list[float]] = {}
 
     def record_high_risk_event(self, session_id: str) -> None:
         self._high_risk_counts[session_id] = (
@@ -335,17 +361,87 @@ class SessionRiskTracker:
         while len(self._high_risk_counts) > self._max_sessions:
             oldest_key = next(iter(self._high_risk_counts))
             del self._high_risk_counts[oldest_key]
+            self._tool_calls.pop(oldest_key, None)
+            self._all_calls.pop(oldest_key, None)
 
-    def get_d4(self, session_id: str) -> int:
+    def record_tool_call(self, session_id: str, tool_name: str, now: float | None = None) -> None:
+        """Record a tool invocation for frequency analysis."""
+        if not self._freq_enabled:
+            return
+        import time as _time
+        ts = now if now is not None else _time.monotonic()
+
+        # Per-tool timestamps
+        session_tools = self._tool_calls.setdefault(session_id, {})
+        tool_ts = session_tools.setdefault(tool_name, [])
+        tool_ts.append(ts)
+        # Trim to repetitive window (the larger window)
+        cutoff = ts - self._freq_repetitive_window_s
+        while tool_ts and tool_ts[0] < cutoff:
+            tool_ts.pop(0)
+
+        # All-tool timestamps
+        all_ts = self._all_calls.setdefault(session_id, [])
+        all_ts.append(ts)
+        rate_cutoff = ts - 60.0
+        while all_ts and all_ts[0] < rate_cutoff:
+            all_ts.pop(0)
+
+    def _get_frequency_d4(self, session_id: str, now: float | None = None) -> int:
+        """Compute D4 contribution from tool-call frequency."""
+        if not self._freq_enabled:
+            return 0
+        import time as _time
+        ts = now if now is not None else _time.monotonic()
+        freq_d4 = 0
+
+        # Burst detection: same tool >= N in burst window
+        session_tools = self._tool_calls.get(session_id, {})
+        burst_cutoff = ts - self._freq_burst_window_s
+        for tool_ts in session_tools.values():
+            count = sum(1 for t in tool_ts if t >= burst_cutoff)
+            if count >= self._freq_burst_count:
+                freq_d4 = max(freq_d4, 2)
+                break
+
+        # Repetitive detection: same tool >= N in repetitive window
+        if freq_d4 < 2:
+            rep_cutoff = ts - self._freq_repetitive_window_s
+            for tool_ts in session_tools.values():
+                count = sum(1 for t in tool_ts if t >= rep_cutoff)
+                if count >= self._freq_repetitive_count:
+                    freq_d4 = max(freq_d4, 1)
+                    break
+
+        # Overall rate detection: all tools >= N per minute
+        if freq_d4 < 1:
+            all_ts = self._all_calls.get(session_id, [])
+            rate_cutoff = ts - 60.0
+            rate_count = sum(1 for t in all_ts if t >= rate_cutoff)
+            if rate_count >= self._freq_rate_limit_per_min:
+                freq_d4 = max(freq_d4, 1)
+
+        return freq_d4
+
+    def get_d4(self, session_id: str, now: float | None = None) -> int:
+        # Accumulation-based D4
         count = self._high_risk_counts.get(session_id, 0)
         if count >= self._d4_high_threshold:
-            return 2
-        if count >= self._d4_mid_threshold:
-            return 1
-        return 0
+            accum_d4 = 2
+        elif count >= self._d4_mid_threshold:
+            accum_d4 = 1
+        else:
+            accum_d4 = 0
+
+        # E-8: Frequency-based D4
+        freq_d4 = self._get_frequency_d4(session_id, now=now)
+
+        return min(max(accum_d4, freq_d4), 2)
 
     def reset_session(self, session_id: str) -> None:
         self._high_risk_counts.pop(session_id, None)
+        self._tool_calls.pop(session_id, None)
+        self._all_calls.pop(session_id, None)
 
 
 # ---------------------------------------------------------------------------
@@ -483,7 +579,15 @@ def compute_risk_snapshot(
 
     # D6: Injection detection
     payload_text = _extract_text_for_d6(event)
-    d6 = score_layer1(payload_text, event.tool_name or "") if payload_text else 0.0
+    # E-8: Extract content origin from _clawsentry_meta if present
+    _meta = (event.payload or {}).get("_clawsentry_meta") or {}
+    _content_origin = _meta.get("content_origin") if isinstance(_meta, dict) else None
+    d6 = score_layer1(
+        payload_text,
+        event.tool_name or "",
+        content_origin=_content_origin,
+        d6_boost=config.external_content_d6_boost,
+    ) if payload_text else 0.0
 
     dims = RiskDimensions(d1=d1, d2=d2, d3=d3, d4=d4, d5=d5, d6=d6)
 

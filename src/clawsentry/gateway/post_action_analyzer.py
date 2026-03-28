@@ -233,8 +233,16 @@ class PostActionAnalyzer:
         tool_name: str,
         event_id: str,
         file_path: Optional[str] = None,
+        content_origin: Optional[str] = None,
+        external_multiplier: float = 1.0,
     ) -> PostActionFinding:
-        """Analyze tool output for security threats."""
+        """Analyze tool output for security threats.
+
+        Args:
+            content_origin: ``"external"`` / ``"user"`` / ``"unknown"`` / ``None``.
+            external_multiplier: Score multiplier when *content_origin* is ``"external"``
+                                 (configured via ``DetectionConfig.external_content_post_action_multiplier``).
+        """
         if file_path and self._is_whitelisted(file_path):
             return PostActionFinding(
                 tier=PostActionResponseTier.LOG_ONLY,
@@ -277,6 +285,10 @@ class PostActionAnalyzer:
         else:
             combined = max(scores) + 0.15 * (len(scores) - 1)
         combined = min(combined, 3.0)
+
+        # E-8: External content multiplier
+        if content_origin == "external" and external_multiplier > 1.0:
+            combined = min(combined * external_multiplier, 3.0)
 
         if combined >= self._tier_emergency:
             tier = PostActionResponseTier.EMERGENCY

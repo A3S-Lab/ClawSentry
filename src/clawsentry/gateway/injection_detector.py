@@ -89,8 +89,19 @@ TOOL_SPECIFIC_PATTERNS: dict[str, list[re.Pattern]] = {
 _MAX_SCORE_INPUT_LEN = 65_536  # 64KB cap — matches event_text() limit
 
 
-def score_layer1(text: str, tool_name: Optional[str] = None) -> float:
-    """Score text for injection patterns (Layer 1 heuristic). Returns 0.0-3.0."""
+def score_layer1(
+    text: str,
+    tool_name: Optional[str] = None,
+    content_origin: Optional[str] = None,
+    d6_boost: float = 0.0,
+) -> float:
+    """Score text for injection patterns (Layer 1 heuristic). Returns 0.0-3.0.
+
+    Args:
+        content_origin: ``"external"`` / ``"user"`` / ``"unknown"`` / ``None``.
+        d6_boost: Additional score to add when *content_origin* is ``"external"``
+                  (configured via ``DetectionConfig.external_content_d6_boost``).
+    """
     if len(text) > _MAX_SCORE_INPUT_LEN:
         text = text[:_MAX_SCORE_INPUT_LEN]
     score = 0.0
@@ -116,6 +127,10 @@ def score_layer1(text: str, tool_name: Optional[str] = None) -> float:
         tool_pats = TOOL_SPECIFIC_PATTERNS.get(tool_name, [])
         tool_count = sum(1 for p in tool_pats if p.search(normalized))
         score += min(tool_count * 0.5, 1.0)
+
+    # E-8: External content D6 boost
+    if content_origin == "external" and d6_boost > 0:
+        score += d6_boost
 
     return min(score, 3.0)
 

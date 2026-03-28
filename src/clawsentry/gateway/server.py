@@ -1119,6 +1119,12 @@ class SupervisionGateway:
         start = time.monotonic()
         deadline_at = start + req.deadline_ms / 1000.0
 
+        # --- E-8: Record tool call for D4 frequency analysis ---
+        if req.event.tool_name:
+            self.policy_engine.session_tracker.record_tool_call(
+                str(req.event.session_id or ""), req.event.tool_name
+            )
+
         # --- A-7: Session enforcement check (before policy_engine) ---
         enforcement = self.session_enforcement.check(
             str(req.event.session_id or "")
@@ -1344,10 +1350,15 @@ class SupervisionGateway:
                     or ""
                 )
                 if output_text:
+                    # E-8: Extract content origin for post-action multiplier
+                    _pa_meta = (req.event.payload or {}).get("_clawsentry_meta") or {}
+                    _pa_origin = _pa_meta.get("content_origin") if isinstance(_pa_meta, dict) else None
                     finding = self.post_action_analyzer.analyze(
                         tool_output=output_text,
                         tool_name=req.event.tool_name or "unknown",
                         event_id=req.event.event_id,
+                        content_origin=_pa_origin,
+                        external_multiplier=self._detection_config.external_content_post_action_multiplier,
                     )
                     if finding.tier.value != "log_only":
                         self.event_bus.broadcast({
