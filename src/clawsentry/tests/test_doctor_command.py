@@ -439,13 +439,31 @@ class TestRunDoctor:
     def test_all_pass_exit_0(self, monkeypatch: pytest.MonkeyPatch,
                               capsys: pytest.CaptureFixture[str],
                               tmp_path) -> None:
+        from unittest import mock
         # Set up env for all-pass scenario
         monkeypatch.setenv("CS_AUTH_TOKEN",
                            "aB3xY7mN9pQ2kL5wR8vZ1cD4fG6hJ0tE")  # 33 chars, high entropy
         monkeypatch.setenv("CS_UDS_PATH", str(tmp_path / "no.sock"))
         monkeypatch.setenv("CS_TRAJECTORY_DB_PATH",
                            str(tmp_path / "test.db"))
-        code = run_doctor(json_mode=False, color=False)
+        # Mock Latch binary as installed + executable, and hub as healthy
+        fake_binary = tmp_path / "latch"
+        fake_binary.write_text("#!/bin/sh\necho ok")
+        fake_binary.chmod(0o755)
+        mock_resp = mock.MagicMock()
+        mock_resp.status = 200
+        mock_resp.__enter__ = mock.MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = mock.MagicMock(return_value=False)
+        with mock.patch(
+            "clawsentry.latch.binary_manager.BinaryManager.is_installed",
+            new_callable=mock.PropertyMock, return_value=True,
+        ), mock.patch(
+            "clawsentry.latch.binary_manager.BinaryManager.binary_path",
+            new_callable=mock.PropertyMock, return_value=fake_binary,
+        ), mock.patch(
+            "urllib.request.urlopen", return_value=mock_resp,
+        ):
+            code = run_doctor(json_mode=False, color=False)
         assert code == 0
 
     def test_fail_exit_1(self, monkeypatch: pytest.MonkeyPatch,

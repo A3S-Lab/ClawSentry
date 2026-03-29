@@ -251,6 +251,39 @@ def _build_parser() -> argparse.ArgumentParser:
     config_sub.add_parser("disable", help="Disable ClawSentry for this project.")
     config_sub.add_parser("enable", help="Enable ClawSentry for this project.")
 
+    # --- latch ---
+    latch_parser = sub.add_parser(
+        "latch",
+        help="Manage Latch integration (install/start/stop/status).",
+    )
+    latch_sub = latch_parser.add_subparsers(dest="latch_command")
+
+    latch_sub.add_parser("install", help="Download and install Latch binary.")
+
+    _latch_default_gw_port = int(os.environ.get("CS_HTTP_PORT", "8080"))
+    latch_start_parser = latch_sub.add_parser("start", help="Start Gateway + Latch Hub.")
+    latch_start_parser.add_argument(
+        "--gateway-port",
+        type=int,
+        default=_latch_default_gw_port,
+        help=f"Gateway HTTP port (default: {_latch_default_gw_port}).",
+    )
+    latch_start_parser.add_argument(
+        "--hub-port",
+        type=int,
+        default=3006,
+        help="Latch Hub port (default: 3006).",
+    )
+    latch_start_parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        default=False,
+        help="Don't open browser after start.",
+    )
+
+    latch_sub.add_parser("stop", help="Stop Gateway + Latch Hub.")
+    latch_sub.add_parser("status", help="Show Latch stack status.")
+
     # --- start ---
     start_parser = sub.add_parser(
         "start",
@@ -416,6 +449,25 @@ def main(argv: list[str] | None = None) -> None:
             run_config_enable(target_dir=target)
         else:
             print("Usage: clawsentry config {init,show,set,disable,enable}")
+
+    elif args.command == "latch":
+        from .latch_command import (
+            run_latch_install, run_latch_start, run_latch_stop, run_latch_status,
+        )
+        if args.latch_command == "install":
+            sys.exit(run_latch_install())
+        elif args.latch_command == "start":
+            sys.exit(run_latch_start(
+                gateway_port=args.gateway_port,
+                hub_port=args.hub_port,
+                no_browser=args.no_browser,
+            ))
+        elif args.latch_command == "stop":
+            sys.exit(run_latch_stop())
+        elif args.latch_command == "status":
+            sys.exit(run_latch_status())
+        else:
+            print("Usage: clawsentry latch {install,start,stop,status}")
 
     elif args.command == "start":
         from .start_command import detect_framework, run_start

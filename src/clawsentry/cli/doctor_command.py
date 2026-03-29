@@ -1,6 +1,6 @@
 """``clawsentry doctor`` — offline configuration security audit.
 
-Loads ``.env.clawsentry``, runs 14 checks, and outputs a PASS/WARN/FAIL report.
+Loads ``.env.clawsentry``, runs 17 checks, and outputs a PASS/WARN/FAIL report.
 """
 
 from __future__ import annotations
@@ -264,6 +264,68 @@ def check_codex_config() -> DoctorCheck:
 
 
 # ---------------------------------------------------------------------------
+# Latch checks
+# ---------------------------------------------------------------------------
+
+
+def check_latch_binary() -> DoctorCheck:
+    """Check whether the Latch binary is installed and executable."""
+    try:
+        from clawsentry.latch.binary_manager import BinaryManager
+    except ImportError:
+        return DoctorCheck("LATCH_BINARY", "PASS",
+                           "Latch package not installed (optional).")
+
+    mgr = BinaryManager()
+    if not mgr.is_installed:
+        return DoctorCheck("LATCH_BINARY", "WARN",
+                           "Latch binary not installed.",
+                           detail="Run: clawsentry latch install")
+    if not os.access(mgr.binary_path, os.X_OK):
+        return DoctorCheck("LATCH_BINARY", "WARN",
+                           f"Latch binary at {mgr.binary_path} is not executable.",
+                           detail=f"Run: chmod +x {mgr.binary_path}")
+    return DoctorCheck("LATCH_BINARY", "PASS",
+                       f"Latch binary installed at {mgr.binary_path}.")
+
+
+def check_latch_hub_health() -> DoctorCheck:
+    """Check whether Latch Hub is responding on its health endpoint."""
+    import urllib.request
+
+    hub_port = _env("CS_LATCH_HUB_PORT") or "3006"
+    url = f"http://127.0.0.1:{hub_port}/health"
+    try:
+        with urllib.request.urlopen(url, timeout=2) as resp:
+            if resp.status == 200:
+                return DoctorCheck("LATCH_HUB_HEALTH", "PASS",
+                                   f"Latch Hub responding on port {hub_port}.")
+    except (OSError, urllib.error.URLError):
+        pass
+    return DoctorCheck("LATCH_HUB_HEALTH", "WARN",
+                       f"Latch Hub not responding on port {hub_port}.",
+                       detail="Start with: clawsentry latch start")
+
+
+def check_latch_token_sync() -> DoctorCheck:
+    """Check CS_AUTH_TOKEN and CLI_API_TOKEN are consistent."""
+    cs_token = _env("CS_AUTH_TOKEN")
+    cli_token = _env("CLI_API_TOKEN")
+    if not cs_token and not cli_token:
+        return DoctorCheck("LATCH_TOKEN_SYNC", "PASS",
+                           "No Latch tokens configured (optional).")
+    if not cli_token:
+        return DoctorCheck("LATCH_TOKEN_SYNC", "PASS",
+                           "CLI_API_TOKEN not set (Latch Hub not configured).")
+    if cs_token == cli_token:
+        return DoctorCheck("LATCH_TOKEN_SYNC", "PASS",
+                           "CS_AUTH_TOKEN and CLI_API_TOKEN match.")
+    return DoctorCheck("LATCH_TOKEN_SYNC", "WARN",
+                       "CS_AUTH_TOKEN and CLI_API_TOKEN differ.",
+                       detail="Ensure both tokens match for Latch ↔ Gateway auth.")
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -282,6 +344,9 @@ ALL_CHECKS = [
     check_l2_budget,
     check_trajectory_db,
     check_codex_config,
+    check_latch_binary,
+    check_latch_hub_health,
+    check_latch_token_sync,
 ]
 
 
