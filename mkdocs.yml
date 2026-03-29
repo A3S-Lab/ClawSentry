@@ -101,6 +101,8 @@ nav:
     - 常见问题: getting-started/faq.md
   - 集成接入:
     - a3s-code 集成: integration/a3s-code.md
+    - Claude Code 集成: integration/claude-code.md
+    - Codex CLI 集成: integration/codex.md
     - OpenClaw 集成: integration/openclaw.md
   - 配置参考:
     - 环境变量: configuration/env-vars.md

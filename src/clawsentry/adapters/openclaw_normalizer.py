@@ -9,8 +9,6 @@ Design basis:
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 
 import uuid
@@ -24,6 +22,8 @@ from ..gateway.models import (
     extract_risk_hints,
     utc_now_iso,
 )
+from .a3s_adapter import infer_content_origin
+from .event_id import generate_event_id_with_priority as _generate_event_id
 
 logger = logging.getLogger("openclaw-normalizer")
 
@@ -55,41 +55,6 @@ _CHAT_STATE_MAPPING: dict[str, tuple[EventType, str]] = {
     "aborted": (EventType.ERROR, "oc-chat-aborted"),
     "error": (EventType.ERROR, "oc-chat-error"),
 }
-
-
-# ---------------------------------------------------------------------------
-# event_id generation (02 section 6.1)
-# ---------------------------------------------------------------------------
-
-def _generate_event_id(
-    approval_id: Optional[str],
-    run_id: Optional[str],
-    source_seq: Optional[int],
-    source_framework: str,
-    session_id: str,
-    event_subtype: str,
-    occurred_at: str,
-    payload: dict[str, Any],
-) -> str:
-    """
-    Generate stable event_id per 02 section 6.1.
-
-    Priority: approval_id > runId:seq > hash fallback.
-    """
-    if approval_id:
-        raw = f"{source_framework}:{approval_id}:{event_subtype}"
-        return hashlib.sha256(raw.encode()).hexdigest()[:24]
-
-    if run_id and source_seq is not None:
-        raw = f"{source_framework}:{run_id}:{source_seq}:{event_subtype}"
-        return hashlib.sha256(raw.encode()).hexdigest()[:24]
-
-    # Hash fallback (same as a3s_adapter pattern)
-    payload_digest = hashlib.sha256(
-        json.dumps(payload, sort_keys=True, default=str).encode()
-    ).hexdigest()[:16]
-    raw = f"{source_framework}:{session_id}:{event_subtype}:{occurred_at}:{payload_digest}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
 # ---------------------------------------------------------------------------
@@ -180,14 +145,14 @@ class OpenClawNormalizer:
 
         # Generate stable event_id
         event_id = _generate_event_id(
+            self.SOURCE_FRAMEWORK,
+            effective_session_id,
+            event_subtype,
+            effective_occurred_at,
+            payload,
             approval_id=approval_id,
             run_id=run_id,
             source_seq=source_seq,
-            source_framework=self.SOURCE_FRAMEWORK,
-            session_id=effective_session_id,
-            event_subtype=event_subtype,
-            occurred_at=effective_occurred_at,
-            payload=payload,
         )
 
         # Build normalization metadata
@@ -215,6 +180,11 @@ class OpenClawNormalizer:
                 if alias in payload and isinstance(payload[alias], str):
                     payload = {**payload, "output": payload[alias]}
                     break
+
+        # E-8: Inject content_origin metadata for D6 boost / post-action multiplier
+        origin = infer_content_origin(tool_name, payload)
+        payload = dict(payload)  # shallow copy to avoid mutating caller's dict
+        payload["_clawsentry_meta"] = {"content_origin": origin}
 
         return CanonicalEvent(
             event_id=event_id,

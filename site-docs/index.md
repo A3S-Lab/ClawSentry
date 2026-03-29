@@ -80,8 +80,8 @@ hide:
 </div>
 
 <div class="card" markdown>
-### :link: 双框架接入
-**a3s-code** + **OpenClaw**
+### :link: 四框架接入
+**a3s-code** + **Claude Code** + **Codex** + **OpenClaw**
 
 统一 AHP 协议归一化事件
 </div>
@@ -118,12 +118,16 @@ flowchart LR
     subgraph fw["Agent 框架"]
         direction TB
         A3S["a3s-code\nstdio / HTTP"]
+        CC["Claude Code\nHook + Harness"]
+        CX["Codex CLI\nHTTP"]
         OC["OpenClaw\nWS / Webhook"]
     end
 
     subgraph gw["适配器层"]
         direction TB
         A3SA["A3S Adapter"]
+        CCA["Claude Code Adapter"]
+        CXA["Codex Adapter"]
         OCA["OpenClaw Adapter"]
     end
 
@@ -163,9 +167,11 @@ flowchart LR
     end
 
     A3S --> A3SA
+    CC --> CCA
+    CX --> CXA
     OC --> OCA
-    A3SA & OCA --> CE
-    PE -->|"同步判决"| A3SA & OCA
+    A3SA & CCA & CXA & OCA --> CE
+    PE -->|"同步判决"| A3SA & CCA & CXA & OCA
 
     CE -.->|"post_action 异步"| PA & TA
     L2 -.->|"候选模式"| PEV
@@ -236,7 +242,7 @@ flowchart LR
 
 ---
 
-## 双框架支持
+## 四框架支持
 
 === "a3s-code"
 
@@ -251,6 +257,31 @@ flowchart LR
     ```
 
     详见 [a3s-code 集成指南](integration/a3s-code.md)
+
+=== "Claude Code"
+
+    通过 **Hook 系统** + **stdio harness** 接入，自动注入 `settings.local.json`。
+
+    ```bash
+    clawsentry init claude-code   # 一键配置 hooks
+    source .env.clawsentry
+    clawsentry gateway &          # 启动 Gateway
+    claude                        # 正常使用，所有工具调用自动监控
+    ```
+
+    详见 [Claude Code 集成指南](integration/claude-code.md)
+
+=== "Codex CLI"
+
+    通过 **HTTP Transport**（`POST /ahp/codex`）接入，简化 JSON 请求格式。
+
+    ```bash
+    clawsentry init codex         # 生成配置
+    source .env.clawsentry
+    clawsentry gateway            # 启动 Gateway
+    ```
+
+    详见 [Codex CLI 集成指南](integration/codex.md)
 
 === "OpenClaw"
 
@@ -285,6 +316,7 @@ flowchart LR
 | `/health` | GET | 健康检查 |
 | `/ahp` | POST | OpenClaw Webhook 决策 |
 | `/ahp/a3s` | POST | a3s-code HTTP Transport |
+| `/ahp/codex` | POST | Codex CLI HTTP Transport |
 | `/ahp/resolve` | POST | DEFER 决策代理（allow-once / deny） |
 | `/ahp/patterns` | GET | 查询自进化模式库列表（需 `CS_EVOLVING_ENABLED=true`） |
 | `/ahp/patterns/confirm` | POST | 确认/拒绝进化模式，用于反馈驱动的模式学习 |
@@ -323,7 +355,7 @@ Gateway 在 `/ui` 路径自动挂载静态文件，无需额外配置。
 
 | 指标 | 数据 |
 |:---:|:---:|
-| 测试用例 | **1663+** |
+| 测试用例 | **1792+** |
 | 测试耗时 | **~24s** |
 | 协议版本 | `sync_decision.1.0` |
 | Python 版本 | >= 3.11 |
@@ -342,7 +374,7 @@ Gateway 在 `/ui` 路径自动挂载静态文件，无需额外配置。
 
 <div class="card" markdown>
 ### [:material-connection: 集成接入](integration/a3s-code.md)
-a3s-code / OpenClaw 框架集成
+a3s-code / Claude Code / Codex / OpenClaw 集成
 </div>
 
 <div class="card" markdown>

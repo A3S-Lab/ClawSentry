@@ -170,7 +170,7 @@ class TestRegistry:
 
     def test_registry_list(self):
         names = sorted(FRAMEWORK_INITIALIZERS.keys())
-        assert names == ["a3s-code", "openclaw"]
+        assert names == ["a3s-code", "claude-code", "codex", "openclaw"]
 
 
 from clawsentry.cli.init_command import run_init

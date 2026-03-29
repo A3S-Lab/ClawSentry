@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from .a3s_code import A3SCodeInitializer
 from .base import FrameworkInitializer, InitResult, SetupResult
+from .claude_code import ClaudeCodeInitializer
+from .codex import CodexInitializer
 from .openclaw import OpenClawInitializer
 
 FRAMEWORK_INITIALIZERS: dict[str, type] = {
     "a3s-code": A3SCodeInitializer,
+    "claude-code": ClaudeCodeInitializer,
+    "codex": CodexInitializer,
     "openclaw": OpenClawInitializer,
 }
 

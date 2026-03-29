@@ -118,7 +118,9 @@ def normalize_text(text: str) -> str:
     Applies:
     1. NFKC Unicode normalization (collapses fullwidth/halfwidth variants,
        compatibility decomposition + canonical composition)
-    2. Strip invisible Unicode characters (all code points in INVISIBLE_CODEPOINTS)
+    2. Strip combining diacritical marks (Unicode category Mn) that can be
+       used to evade keyword matching (e.g. ig\\u0300nore → ignore)
+    3. Strip invisible Unicode characters (all code points in INVISIBLE_CODEPOINTS)
 
     U+FE0F (emoji VS-16) is preserved — it is used for emoji presentation
     and its removal would corrupt normal emoji text.
@@ -127,9 +129,18 @@ def normalize_text(text: str) -> str:
         text: Raw input string.
 
     Returns:
-        Normalized string with invisible characters removed.
+        Normalized string with invisible and combining characters removed.
     """
     normalized = unicodedata.normalize("NFKC", text)
+    # Strip combining diacritical marks (Mn = Non-spacing Mark) to prevent
+    # keyword evasion via inserted accents (e.g. "ig̀nore" bypassing "ignore").
+    # Preserve U+FE0F (VS-16, emoji presentation selector) to avoid breaking emoji.
+    normalized = "".join(
+        ch for ch in unicodedata.normalize("NFD", normalized)
+        if unicodedata.category(ch) != "Mn" or ch == "\uFE0F"
+    )
+    # Re-compose after stripping marks
+    normalized = unicodedata.normalize("NFC", normalized)
     return INVISIBLE_RE.sub("", normalized)
 
 

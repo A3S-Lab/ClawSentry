@@ -18,11 +18,11 @@ AHP (Agent Harness Protocol) reference implementation — a unified security sup
 - **Multi-step attack trajectory detection**: 5 built-in sequences with sliding-window analysis, SSE `trajectory_alert` broadcast
 - **Self-evolving pattern library (E-5)**: auto-extract candidates from high-risk events, CANDIDATE→EXPERIMENTAL→STABLE lifecycle, confidence scoring, REST API feedback loop
 - **Tunable detection pipeline**: `DetectionConfig` frozen dataclass with 20 parameters, all overridable via `CS_` environment variables
-- **Dual framework support**: a3s-code (stdio / HTTP) + OpenClaw (WebSocket / Webhook)
+- **Four-framework support**: a3s-code (stdio / HTTP) + Claude Code (hooks / harness) + Codex CLI (HTTP) + OpenClaw (WebSocket / Webhook)
 - **Real-time monitoring**: SSE streaming, `clawsentry watch` CLI, React/TypeScript web dashboard
 - **Production security**: Bearer token auth, HMAC webhook signatures, UDS chmod 0o600, SSL/TLS, rate limiting
 - **Session enforcement**: auto-escalate after N high-risk events with configurable cooldown
-- **1663+ tests**, ~25s full suite
+- **1792+ tests**, ~27s full suite
 
 ## Installation
 

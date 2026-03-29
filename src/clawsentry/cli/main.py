@@ -62,6 +62,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Custom OpenClaw config directory (default: ~/.openclaw/).",
     )
+    init_parser.add_argument(
+        "--uninstall",
+        action="store_true",
+        default=False,
+        help="Remove ClawSentry hooks from framework settings.",
+    )
 
     # --- gateway ---
     sub.add_parser(
@@ -233,7 +239,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     start_parser.add_argument(
         "--framework",
-        choices=["openclaw", "a3s-code"],
+        choices=sorted(FRAMEWORK_INITIALIZERS.keys()),
         default=None,
         help="Target framework (auto-detected if omitted).",
     )
@@ -276,6 +282,21 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "init":
+        # Handle --uninstall for claude-code
+        if getattr(args, "uninstall", False):
+            if args.framework == "claude-code":
+                from .initializers.claude_code import ClaudeCodeInitializer
+                init = ClaudeCodeInitializer()
+                result = init.uninstall()
+                for w in result.warnings:
+                    print(f"  Warning: {w}", file=sys.stderr)
+                for step in result.next_steps:
+                    print(f"  {step}")
+                sys.exit(0)
+            else:
+                print(f"--uninstall is only supported for claude-code, got: {args.framework}", file=sys.stderr)
+                sys.exit(1)
+
         from .init_command import run_init
 
         code = run_init(

@@ -2,6 +2,42 @@
 
 本文件记录 ClawSentry 各版本的重要变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.2.7] — 2026-03-29
+
+### 修复
+
+#### 安全修复（4 P0）
+
+- **ReDoS 正则退化**：`post_action_analyzer` 中 var-expansion 检测正则含嵌套量词，拆分为两个非嵌套简单模式
+- **`--async` 模式 event loop 泄漏**：harness 每条消息创建新 event loop，改为持久 loop + finally 清理
+- **异常静默吞没**：`server.py` 策略引擎强制执行路径 bare `except` 未记录异常，补充 `logger.exception()`
+- **私有属性直接访问**：`PatternEvolutionManager._enabled` 未暴露公共接口，新增 `@property enabled`
+
+#### 重要修复（11 P1）
+
+- **curl 白名单绕过**：不可见 Unicode 字符可绕过 curl-pipe-shell 安全白名单，改为 raw + normalized 双重检查
+- **combining diacritics 绕过**：NFD 组合变音符可避开英文注入模式匹配，新增 Mn 类别字符剥离（保留 U+FE0F emoji VS-16）
+- **Codex 端点 fail-open**：Codex HTTP 端点异常时 fallback 为 "continue"（放行），改为 fail-closed "block"
+- **Claude Code hooks 覆盖**：`_merge_settings` 直接覆盖已有 hooks，改为追加模式 + 防御性 JSON 解析
+- **内存无限增长**：`risk_snapshot` 使用 `list.pop(0)` O(n) 操作且无上限，改为 `deque.popleft()` + 驱逐机制 + `_MAX_CLIENTS`
+- **OpenClaw 缺少 content_origin**：OpenClaw normalizer 未注入 `_clawsentry_meta.content_origin`，补充 `infer_content_origin` 调用
+- **秘密检测误报**：`pwd` 命令匹配 password 模式、`sk-` / `Bearer` token 模式重复计数，清理去重
+- **doctor 弱 token 检测**：新增 `check_auth_weak_value`（14 项检查），检测 "changeme" 等已知弱 token
+- **正则+import 修复**：`_BASH_EXTERNAL_RE` 错误匹配、`audit_command` 使用 `__import__`、`--stats --format json` 不支持
+- **start 命令硬编码**：框架选项列表硬编码，改为动态读取 `FRAMEWORK_INITIALIZERS.keys()`
+- **listen_address 判断风格**：多个 `or` 比较改为 `set` 成员检查
+
+### 改进
+
+- **event_id 生成统一**：提取 `adapters/event_id.py` 共享模块，消除 a3s_adapter / codex_adapter / openclaw_normalizer 三处重复
+- **测试基础设施**：新增 `conftest.py` 共享 fixtures（`StubTrajectoryStore` / `skills_dir`），`review_toolkit` 测试 3→31 全方法覆盖
+- **test_gateway.py**：消除 `__import__('collections')` 反模式
+
+### 测试覆盖
+- 测试总量：1760 → 1792（+32 tests, 0 regressions）
+
+---
+
 ## [0.2.6] — 2026-03-29
 
 ### 新增
@@ -27,9 +63,34 @@
 | `CS_D4_FREQ_REPETITIVE_WINDOW_S` | `60.0` | 重复滥用窗口（秒） |
 | `CS_D4_FREQ_RATE_LIMIT_PER_MIN` | `60` | 整体速率限制 |
 
+#### Claude Code 独立接入（E-9 Phase 1）
+
+- **`clawsentry init claude-code`**：一键生成 `.env.clawsentry` + 智能合并 `~/.claude/settings.local.json` hooks（PreToolUse 阻塞 + PostToolUse/SessionStart/SessionEnd 异步）
+- **Harness 双格式自动检测**：JSON-RPC 2.0（a3s-code）+ 原生 hook JSON（Claude Code）自动识别分流
+- **`--async` 模式**：非阻塞 hook（PostToolUse/SessionStart 等）后台 dispatch，不阻塞 Agent 主流程
+- **Adapter `source_framework` 可配置**：`A3SCodeAdapter(source_framework="claude-code")` 在审计日志中区分不同框架
+- **DEFER 超时配置**：`CS_DEFER_TIMEOUT_ACTION`（block/allow）+ `CS_DEFER_TIMEOUT_S`（默认 300s）
+- **`--uninstall`**：精确移除 ClawSentry hooks，保留用户其他自定义 hooks
+
+#### Codex 独立接入（E-9 Phase 2）
+
+- **`POST /ahp/codex` HTTP 端点**：简化 JSON 请求格式（hook_type + payload），自动归一化为 CanonicalEvent
+- **`CodexAdapter`**：支持 4 种事件类型（function_call → pre_action / function_call_output → post_action / session_meta → session / session_end → session）
+- **`clawsentry init codex`**：生成 `.env.clawsentry`（含 `CS_HTTP_PORT`、`CS_AUTH_TOKEN`、`CS_FRAMEWORK=codex`）
+- **`clawsentry doctor` Codex 检查**：自动检测 Codex 配置完整性（endpoint URL + auth token）
+- **Fail-closed 安全默认**：Codex 端点异常时 fallback 为 block（非 continue）
+
+#### 新增环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `CS_DEFER_TIMEOUT_ACTION` | `block` | DEFER 超时行为（block / allow） |
+| `CS_DEFER_TIMEOUT_S` | `300` | DEFER 超时秒数 |
+
 ### 测试覆盖
-- 测试总量：1483 → 1663（+180 tests, 0 regressions）
-- 新增测试文件：test_doctor_command.py (61) / test_audit_command.py (40) / test_content_origin.py (43) / test_d4_frequency.py (25) / test_docker.py (11)
+- 测试总量：1483 → 1760（+277 tests, 0 regressions）
+- E-8 新增：test_doctor_command.py (61) / test_audit_command.py (40) / test_content_origin.py (43) / test_d4_frequency.py (25) / test_docker.py (11)
+- E-9 新增：test_claude_code_e2e.py (5) / test_claude_code_initializer.py (12) / test_codex_adapter.py (13) / test_codex_http.py (7) / test_codex_e2e.py (8) / test_codex_initializer.py (8) / test_codex_doctor.py (5) / test_defer_manager.py (5) / test_harness_async.py (17) / test_harness_claude_code_format.py (17)
 
 ---
 

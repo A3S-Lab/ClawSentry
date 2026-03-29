@@ -353,14 +353,16 @@ class TestTrajectoryDb:
 # ===== Integration =====
 
 class TestRunAllChecks:
-    def test_returns_12_checks(self) -> None:
+    def test_returns_all_checks(self) -> None:
+        from clawsentry.cli.doctor_command import ALL_CHECKS
         results = run_all_checks()
-        assert len(results) == 12
+        assert len(results) == len(ALL_CHECKS)
 
     def test_all_have_check_id(self) -> None:
+        from clawsentry.cli.doctor_command import ALL_CHECKS
         results = run_all_checks()
         ids = [r.check_id for r in results]
-        assert len(set(ids)) == 12  # all unique
+        assert len(set(ids)) == len(ALL_CHECKS)  # all unique
 
 
 class TestExitCode:
@@ -424,7 +426,8 @@ class TestRunDoctor:
         code = run_doctor(json_mode=True, color=False)
         captured = capsys.readouterr()
         data = json.loads(captured.out)
-        assert len(data) == 12
+        from clawsentry.cli.doctor_command import ALL_CHECKS
+        assert len(data) == len(ALL_CHECKS)
         assert isinstance(code, int)
 
     def test_table_mode(self, capsys: pytest.CaptureFixture[str]) -> None:

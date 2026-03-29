@@ -1,6 +1,6 @@
 """``clawsentry doctor`` — offline configuration security audit.
 
-Loads ``.env.clawsentry``, runs 12 checks, and outputs a PASS/WARN/FAIL report.
+Loads ``.env.clawsentry``, runs 14 checks, and outputs a PASS/WARN/FAIL report.
 """
 
 from __future__ import annotations
@@ -80,6 +80,25 @@ def check_auth_entropy() -> DoctorCheck:
     return DoctorCheck("AUTH_ENTROPY", "WARN",
                        f"Token entropy {ent:.2f} bits/char < 3.5.",
                        detail="Use a mix of uppercase, lowercase, digits, and symbols.")
+
+
+_KNOWN_WEAK_TOKENS = frozenset({
+    "changeme", "secret", "password", "admin", "test", "token",
+    "changeme-replace-with-a-strong-random-token",
+})
+
+
+def check_auth_weak_value() -> DoctorCheck:
+    token = _env("CS_AUTH_TOKEN")
+    if not token:
+        return DoctorCheck("AUTH_WEAK_VALUE", "PASS", "No token to check.")
+    if token.lower() in _KNOWN_WEAK_TOKENS or token.lower().startswith("changeme"):
+        return DoctorCheck(
+            "AUTH_WEAK_VALUE", "FAIL",
+            "CS_AUTH_TOKEN appears to be a placeholder or weak value.",
+            detail="Replace with a cryptographically random value: openssl rand -hex 32",
+        )
+    return DoctorCheck("AUTH_WEAK_VALUE", "PASS", "Token does not match known weak values.")
 
 
 def check_uds_permissions() -> DoctorCheck:
@@ -170,7 +189,7 @@ def check_openclaw_secret() -> DoctorCheck:
 
 def check_listen_address() -> DoctorCheck:
     host = _env("CS_HTTP_HOST") or "127.0.0.1"
-    if host == "127.0.0.1" or host == "localhost" or host == "::1":
+    if host in {"127.0.0.1", "localhost", "::1"}:
         return DoctorCheck("LISTEN_ADDRESS", "PASS",
                            f"Listening on {host} (localhost only).")
     return DoctorCheck("LISTEN_ADDRESS", "WARN",
@@ -229,6 +248,21 @@ def check_trajectory_db() -> DoctorCheck:
                        f"Database directory '{parent}' is not writable.")
 
 
+def check_codex_config() -> DoctorCheck:
+    framework = _env("CS_FRAMEWORK")
+    if framework != "codex":
+        return DoctorCheck("CODEX_CONFIG", "PASS",
+                           "CS_FRAMEWORK is not 'codex' (Codex check skipped).")
+    token = _env("CS_AUTH_TOKEN")
+    port = _env("CS_HTTP_PORT") or "8080"
+    if not token:
+        return DoctorCheck("CODEX_CONFIG", "WARN",
+                           "CS_FRAMEWORK=codex but CS_AUTH_TOKEN is not set.",
+                           detail="Codex endpoint /ahp/codex requires authentication.")
+    return DoctorCheck("CODEX_CONFIG", "PASS",
+                       f"Codex configured: /ahp/codex on port {port}.")
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -237,6 +271,7 @@ ALL_CHECKS = [
     check_auth_presence,
     check_auth_length,
     check_auth_entropy,
+    check_auth_weak_value,
     check_uds_permissions,
     check_threshold_ordering,
     check_weight_bounds,
@@ -246,11 +281,12 @@ ALL_CHECKS = [
     check_whitelist_regex,
     check_l2_budget,
     check_trajectory_db,
+    check_codex_config,
 ]
 
 
 def run_all_checks() -> list[DoctorCheck]:
-    """Run all 12 doctor checks and return results."""
+    """Run all doctor checks and return results."""
     return [fn() for fn in ALL_CHECKS]
 
 

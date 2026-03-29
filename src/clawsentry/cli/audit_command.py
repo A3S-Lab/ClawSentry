@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sqlite3
+import sys
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -383,20 +384,23 @@ def run_audit(
         try:
             since_seconds = parse_duration(since)
         except ValueError as e:
-            print(f"Error: {e}", file=__import__("sys").stderr)
+            print(f"Error: {e}", file=sys.stderr)
             return 1
 
     try:
         reader = AuditReader(db)
     except FileNotFoundError as e:
-        print(f"Error: {e}", file=__import__("sys").stderr)
+        print(f"Error: {e}", file=sys.stderr)
         return 1
 
     with reader:
         if stats_mode:
             result = reader.stats(since_seconds=since_seconds)
-            since_label = f"last {since}" if since else ""
-            print(format_stats(result, since_label=since_label))
+            if fmt == "json":
+                print(json.dumps(result, indent=2))
+            else:
+                since_label = f"last {since}" if since else ""
+                print(format_stats(result, since_label=since_label))
             return 0
 
         records = reader.query(

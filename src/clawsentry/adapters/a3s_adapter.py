@@ -10,7 +10,6 @@ Design basis:
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import struct
@@ -18,6 +17,7 @@ import time
 import uuid
 from typing import Any, Optional
 
+from .event_id import generate_event_id as _generate_event_id
 from ..gateway.models import (
     CanonicalDecision,
     CanonicalEvent,
@@ -48,11 +48,10 @@ _USER_TOOLS = frozenset({
     "read_file", "write_file", "edit_file", "grep", "glob",
     "read", "write", "edit",
 })
-_BASH_EXTERNAL_RE = (
-    r"\b(?:curl|wget|http|https://)\b"
-)
 import re as _re
-_BASH_EXTERNAL_PATTERN = _re.compile(_BASH_EXTERNAL_RE, _re.IGNORECASE)
+_BASH_EXTERNAL_PATTERN = _re.compile(
+    r"(?:\bcurl\b|\bwget\b|https?://)", _re.IGNORECASE
+)
 
 
 def infer_content_origin(tool_name: str | None, payload: dict[str, Any]) -> str:
@@ -103,34 +102,12 @@ _SESSION_SUBTYPES = {
 
 
 # ---------------------------------------------------------------------------
-# event_id generation (02 section 6.1)
-# ---------------------------------------------------------------------------
-
-def _generate_event_id(
-    source_framework: str,
-    session_id: str,
-    event_subtype: str,
-    occurred_at: str,
-    payload: dict[str, Any],
-) -> str:
-    """
-    Generate a stable event_id per 02 section 6.1.
-
-    Uses sha256(source_framework + session_id + event_subtype + occurred_at + payload_digest).
-    """
-    payload_digest = hashlib.sha256(
-        json.dumps(payload, sort_keys=True, default=str).encode()
-    ).hexdigest()[:16]
-    raw = f"{source_framework}:{session_id}:{event_subtype}:{occurred_at}:{payload_digest}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:24]
-
-
-# ---------------------------------------------------------------------------
 # PostResponse re-mapping (02 section 4.1.2)
 # ---------------------------------------------------------------------------
 
 def _reclassify_post_action(
     ahp_event_type: str, payload: dict[str, Any],
+    source_framework: str = "a3s-code",
 ) -> tuple[EventType, Optional[NormalizationMeta]]:
     """
     Apply PostResponse re-mapping rule per 02 section 4.1.2.
@@ -150,7 +127,7 @@ def _reclassify_post_action(
             inferred=True,
             confidence="high",
             raw_event_type="PostAction",
-            raw_event_source="a3s-code",
+            raw_event_source=source_framework,
         )
         return EventType.POST_RESPONSE, norm
 
@@ -175,7 +152,7 @@ class A3SCodeAdapter:
     - Apply local fallback when Gateway unreachable.
     """
 
-    SOURCE_FRAMEWORK = "a3s-code"
+    _DEFAULT_SOURCE_FRAMEWORK = "a3s-code"
     CALLER_ADAPTER_ID = "a3s-adapter.v1"
 
     def __init__(
@@ -184,11 +161,13 @@ class A3SCodeAdapter:
         default_deadline_ms: int = 4500,
         max_rpc_retries: int = 1,
         retry_backoff_ms: int = 50,
+        source_framework: str | None = None,
     ) -> None:
         self.uds_path = uds_path
         self.default_deadline_ms = default_deadline_ms
         self.max_rpc_retries = max_rpc_retries
         self.retry_backoff_ms = retry_backoff_ms
+        self.source_framework = source_framework or self._DEFAULT_SOURCE_FRAMEWORK
 
     def normalize_hook_event(
         self,
@@ -215,7 +194,7 @@ class A3SCodeAdapter:
             # PostResponse re-mapping: check AHP-level PostAction
             if hook_type == "PostToolUse":
                 # Check if this is actually a PostResponse reclassified at AHP level
-                event_type, norm_meta = _reclassify_post_action("PostAction", payload)
+                event_type, norm_meta = _reclassify_post_action("PostAction", payload, self.source_framework)
                 if norm_meta is None:
                     # Standard PostToolUse normalization
                     norm_meta = NormalizationMeta(
@@ -223,7 +202,7 @@ class A3SCodeAdapter:
                         inferred=False,
                         confidence="high",
                         raw_event_type=hook_type,
-                        raw_event_source=self.SOURCE_FRAMEWORK,
+                        raw_event_source=self.source_framework,
                     )
             else:
                 norm_meta = NormalizationMeta(
@@ -231,7 +210,7 @@ class A3SCodeAdapter:
                     inferred=False,
                     confidence="high",
                     raw_event_type=hook_type,
-                    raw_event_source=self.SOURCE_FRAMEWORK,
+                    raw_event_source=self.source_framework,
                 )
         else:
             logger.warning(f"Unknown hook type: {hook_type}")
@@ -241,8 +220,8 @@ class A3SCodeAdapter:
         event_subtype = _SESSION_SUBTYPES.get(hook_type, hook_type)
 
         # Handle sentinel values
-        effective_session_id = session_id or CanonicalEvent.sentinel_session_id(self.SOURCE_FRAMEWORK)
-        effective_agent_id = agent_id or CanonicalEvent.sentinel_agent_id(self.SOURCE_FRAMEWORK)
+        effective_session_id = session_id or CanonicalEvent.sentinel_session_id(self.source_framework)
+        effective_agent_id = agent_id or CanonicalEvent.sentinel_agent_id(self.source_framework)
         effective_trace_id = trace_id or str(uuid.uuid4())
 
         # Track missing fields in normalization
@@ -262,7 +241,7 @@ class A3SCodeAdapter:
 
         # Generate stable event_id
         event_id = _generate_event_id(
-            self.SOURCE_FRAMEWORK,
+            self.source_framework,
             effective_session_id,
             event_subtype,
             occurred_at,
@@ -285,7 +264,7 @@ class A3SCodeAdapter:
             event_type=event_type,
             session_id=effective_session_id,
             agent_id=effective_agent_id,
-            source_framework=self.SOURCE_FRAMEWORK,
+            source_framework=self.source_framework,
             occurred_at=occurred_at,
             payload=enriched_payload,
             event_subtype=event_subtype,

@@ -17,11 +17,12 @@ def detect_framework(
     *,
     openclaw_home: Path | None = None,
     a3s_dir: Path | None = None,
+    codex_home: Path | None = None,
 ) -> str | None:
     """Auto-detect which framework is configured.
 
-    Returns ``"openclaw"``, ``"a3s-code"``, or ``None``.
-    OpenClaw takes priority when both are present.
+    Returns ``"openclaw"``, ``"a3s-code"``, ``"codex"``, ``"claude-code"``,
+    or ``None``.  OpenClaw takes priority when multiple are present.
     """
     oc = openclaw_home or Path.home() / ".openclaw"
     if (oc / "openclaw.json").is_file():
@@ -30,6 +31,28 @@ def detect_framework(
     a3s = a3s_dir or Path.cwd() / ".a3s-code"
     if a3s.is_dir():
         return "a3s-code"
+
+    # Codex: check .env.clawsentry for CS_FRAMEWORK=codex
+    env_file = Path.cwd() / ".env.clawsentry"
+    if env_file.is_file():
+        try:
+            for line in env_file.read_text().splitlines():
+                if line.strip() == "CS_FRAMEWORK=codex":
+                    return "codex"
+        except OSError:
+            pass
+
+    # Claude Code: check for ClawSentry hooks in settings
+    claude_settings = Path.home() / ".claude" / "settings.local.json"
+    if claude_settings.is_file():
+        try:
+            import json as _json
+            data = _json.loads(claude_settings.read_text())
+            hooks = data.get("hooks", {})
+            if any("clawsentry" in str(v) for v in hooks.values()):
+                return "claude-code"
+        except Exception:
+            pass
 
     return None
 

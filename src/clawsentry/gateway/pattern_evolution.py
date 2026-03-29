@@ -368,6 +368,11 @@ class PatternEvolutionManager:
         self.store = EvolvedPatternStore(store_path, max_patterns=max_patterns) if enabled else None
         self._command_hashes: dict[str, str] = {}  # hash → pattern_id (dedup)
 
+    @property
+    def enabled(self) -> bool:
+        """Whether pattern evolution is active."""
+        return self._enabled
+
     def extract_candidate(
         self,
         *,

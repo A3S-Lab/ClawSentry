@@ -65,6 +65,10 @@ class DetectionConfig:
     d4_freq_repetitive_window_s: float = 60.0
     d4_freq_rate_limit_per_min: int = 60
 
+    # --- E-9: DEFER timeout ---
+    defer_timeout_action: str = "block"   # "block" or "allow"
+    defer_timeout_s: float = 300.0        # 5 minutes default
+
     # --- E-5: Self-evolving pattern repository ---
     evolving_enabled: bool = False
     evolved_patterns_path: Optional[str] = None
@@ -96,6 +100,14 @@ class DetectionConfig:
                 f"post_action tier ordering violated: monitor={self.post_action_monitor} "
                 f"<= escalate={self.post_action_escalate} <= emergency={self.post_action_emergency}"
             )
+        if self.defer_timeout_action not in ("block", "allow"):
+            logger.warning(
+                "Invalid defer_timeout_action=%r, falling back to 'block'",
+                self.defer_timeout_action,
+            )
+            object.__setattr__(self, "defer_timeout_action", "block")
+        if self.defer_timeout_s <= 0:
+            raise ValueError(f"defer_timeout_s must be > 0, got {self.defer_timeout_s}")
         if self.threshold_critical > 3.0:
             logger.warning(
                 "threshold_critical=%.2f exceeds max achievable score (3.0) with default weights; "
@@ -134,6 +146,8 @@ _ENV_MAP: list[tuple[str, str, type]] = [
     ("CS_D4_FREQ_REPETITIVE_COUNT", "d4_freq_repetitive_count", int),
     ("CS_D4_FREQ_REPETITIVE_WINDOW_S", "d4_freq_repetitive_window_s", float),
     ("CS_D4_FREQ_RATE_LIMIT_PER_MIN", "d4_freq_rate_limit_per_min", int),
+    ("CS_DEFER_TIMEOUT_ACTION", "defer_timeout_action", str),
+    ("CS_DEFER_TIMEOUT_S", "defer_timeout_s", float),
 ]
 
 # Comma-separated list vars handled separately
@@ -169,22 +183,17 @@ def build_detection_config_from_env() -> DetectionConfig:
             overrides[field_name] = tuple(items)
 
     # Bool env vars (special handling: "1"/"true"/"yes" → True)
-    _bool_env = os.getenv("CS_EVOLVING_ENABLED", "").strip().lower()
-    if _bool_env in ("1", "true", "yes"):
-        overrides["evolving_enabled"] = True
-    elif _bool_env in ("0", "false", "no"):
-        overrides["evolving_enabled"] = False
-    elif _bool_env:
-        logger.warning("Invalid value for CS_EVOLVING_ENABLED=%r, using default (false)", _bool_env)
+    def _parse_bool_env(env_key: str, field_name: str) -> None:
+        raw = os.getenv(env_key, "").strip().lower()
+        if raw in ("1", "true", "yes"):
+            overrides[field_name] = True
+        elif raw in ("0", "false", "no"):
+            overrides[field_name] = False
+        elif raw:
+            logger.warning("Invalid value for %s=%r, using default", env_key, raw)
 
-    # E-8: D4 frequency enabled
-    _freq_env = os.getenv("CS_D4_FREQ_ENABLED", "").strip().lower()
-    if _freq_env in ("1", "true", "yes"):
-        overrides["d4_freq_enabled"] = True
-    elif _freq_env in ("0", "false", "no"):
-        overrides["d4_freq_enabled"] = False
-    elif _freq_env:
-        logger.warning("Invalid value for CS_D4_FREQ_ENABLED=%r, using default (true)", _freq_env)
+    _parse_bool_env("CS_EVOLVING_ENABLED", "evolving_enabled")
+    _parse_bool_env("CS_D4_FREQ_ENABLED", "d4_freq_enabled")
 
     try:
         return DetectionConfig(**overrides)

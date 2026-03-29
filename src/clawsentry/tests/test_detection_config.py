@@ -774,3 +774,39 @@ class TestEvolvingEnabledWarning:
             config = build_detection_config_from_env()
         assert config.evolving_enabled is False
         assert not any("CS_EVOLVING_ENABLED" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# E-9: DEFER timeout configuration
+# ---------------------------------------------------------------------------
+
+
+class TestDeferTimeoutConfig:
+    """DetectionConfig should support DEFER timeout settings."""
+
+    def test_default_defer_timeout_action_is_block(self):
+        cfg = DetectionConfig()
+        assert cfg.defer_timeout_action == "block"
+
+    def test_default_defer_timeout_s(self):
+        cfg = DetectionConfig()
+        assert cfg.defer_timeout_s == 300.0  # 5 minutes
+
+    def test_env_override_defer_timeout_action(self, monkeypatch):
+        monkeypatch.setenv("CS_DEFER_TIMEOUT_ACTION", "allow")
+        cfg = build_detection_config_from_env()
+        assert cfg.defer_timeout_action == "allow"
+
+    def test_env_override_defer_timeout_s(self, monkeypatch):
+        monkeypatch.setenv("CS_DEFER_TIMEOUT_S", "60")
+        cfg = build_detection_config_from_env()
+        assert cfg.defer_timeout_s == 60.0
+
+    def test_invalid_defer_timeout_action_uses_default(self, monkeypatch):
+        monkeypatch.setenv("CS_DEFER_TIMEOUT_ACTION", "invalid_value")
+        cfg = build_detection_config_from_env()
+        assert cfg.defer_timeout_action == "block"  # fallback to default
+
+    def test_negative_defer_timeout_s_rejected(self):
+        with pytest.raises(ValueError, match="defer_timeout_s"):
+            DetectionConfig(defer_timeout_s=-1.0)

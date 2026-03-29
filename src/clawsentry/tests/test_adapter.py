@@ -431,3 +431,42 @@ class TestAdapterDecisionTier:
         decision = await adapter.request_decision(evt, context=context)
         assert captured["caller_adapter"] == "custom-adapter.v9"
         assert decision.decision == DecisionVerdict.ALLOW
+
+
+# ===========================================================================
+# Source Framework Override Tests (E-9)
+# ===========================================================================
+
+class TestSourceFrameworkOverride:
+    """A3SCodeAdapter should support configurable source_framework."""
+
+    def test_default_source_framework(self):
+        adapter = A3SCodeAdapter()
+        assert adapter.source_framework == "a3s-code"
+
+    def test_custom_source_framework(self):
+        adapter = A3SCodeAdapter(source_framework="claude-code")
+        assert adapter.source_framework == "claude-code"
+
+    def test_custom_framework_in_normalized_event(self):
+        adapter = A3SCodeAdapter(source_framework="claude-code")
+        evt = adapter.normalize_hook_event(
+            "PreToolUse",
+            {"tool": "Bash", "command": "ls"},
+            session_id="sess-1",
+            agent_id="agent-1",
+        )
+        assert evt is not None
+        assert evt.source_framework == "claude-code"
+        assert evt.framework_meta.normalization.raw_event_source == "claude-code"
+
+    def test_custom_framework_in_event_id(self):
+        """Different frameworks should produce different event_ids for same payload."""
+        payload = {"tool": "Bash", "command": "echo hi"}
+        a3s = A3SCodeAdapter(source_framework="a3s-code")
+        cc = A3SCodeAdapter(source_framework="claude-code")
+        evt_a3s = a3s.normalize_hook_event("PreToolUse", payload, session_id="s1")
+        evt_cc = cc.normalize_hook_event("PreToolUse", payload, session_id="s1")
+        assert evt_a3s is not None and evt_cc is not None
+        # event_ids differ because source_framework is part of the hash
+        assert evt_a3s.event_id != evt_cc.event_id

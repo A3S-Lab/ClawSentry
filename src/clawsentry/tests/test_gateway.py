@@ -11,6 +11,7 @@ import json
 import os
 import struct
 import time
+from collections import deque
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
@@ -1430,7 +1431,7 @@ class TestSseStream:
         original = EventBus.REPLAY_BUFFER_SIZE
         EventBus.REPLAY_BUFFER_SIZE = 3
         # Reset buffer with new size
-        gw.event_bus._replay_buffer = __import__('collections').deque(maxlen=3)
+        gw.event_bus._replay_buffer = deque(maxlen=3)
         try:
             for i in range(5):
                 gw.event_bus.broadcast({
@@ -1453,7 +1454,7 @@ class TestSseStream:
                 gw.event_bus.unsubscribe(sub_id)
         finally:
             EventBus.REPLAY_BUFFER_SIZE = original
-            gw.event_bus._replay_buffer = __import__('collections').deque(maxlen=original)
+            gw.event_bus._replay_buffer = deque(maxlen=original)
 
     # -----------------------------------------------------------------------
     # HTTP-level tests (status code / headers / error responses)

@@ -40,6 +40,19 @@ _EVENT_TO_HOOK: dict[str, str] = {
 }
 
 
+import re as _re
+
+_CAMEL_RE1 = _re.compile(r"(?<=[a-z0-9])([A-Z])")
+_CAMEL_RE2 = _re.compile(r"(?<=[A-Z])([A-Z][a-z])")
+
+
+def _camel_to_snake(name: str) -> str:
+    """Convert CamelCase to snake_case: PreToolUse -> pre_tool_use."""
+    s = _CAMEL_RE1.sub(r"_\1", name)
+    s = _CAMEL_RE2.sub(r"_\1", s)
+    return s.lower()
+
+
 def _log_stderr(msg: str) -> None:
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] [a3s-gateway-harness] {msg}", file=sys.stderr, flush=True)
@@ -114,6 +127,7 @@ class A3SGatewayHarness:
         harness_version: str = "1.0.0",
         default_session_id: str = "ahp-session",
         default_agent_id: str = "ahp-agent",
+        async_mode: bool = False,
     ) -> None:
         self.adapter = adapter
         self.protocol_version = protocol_version
@@ -121,6 +135,7 @@ class A3SGatewayHarness:
         self.harness_version = harness_version
         self.default_session_id = default_session_id
         self.default_agent_id = default_agent_id
+        self.async_mode = async_mode
 
     def _handshake_result(self) -> dict[str, Any]:
         return {
@@ -183,61 +198,119 @@ class A3SGatewayHarness:
         decision = await self.adapter.request_decision(evt)
         return _decision_to_ahp_result(decision)
 
+    def _convert_native_hook(self, msg: dict[str, Any]) -> dict[str, Any]:
+        """Convert native Claude Code hook JSON to harness event params."""
+        params: dict[str, Any] = {}
+
+        # event_type can be top-level or inferred from hook_type
+        event_type = msg.get("event_type") or msg.get("hook_type", "")
+        # Normalize CamelCase: PreToolUse -> pre_tool_use
+        if event_type and not event_type.islower():
+            event_type = _camel_to_snake(event_type)
+        params["event_type"] = event_type
+
+        # payload can be nested or the msg itself is the payload
+        payload = msg.get("payload")
+        if payload is None:
+            payload = {k: v for k, v in msg.items() if k not in ("event_type", "hook_type")}
+        params["payload"] = payload
+
+        # Lift session_id / agent_id to params level for _handle_event
+        for key in ("session_id", "agent_id"):
+            if key in msg:
+                params[key] = msg[key]
+            elif isinstance(payload, dict) and key in payload:
+                params[key] = payload[key]
+
+        return params
+
     async def dispatch_async(self, msg: dict[str, Any]) -> Optional[dict[str, Any]]:
         req_id = msg.get("id")
         method = msg.get("method")
-        params_raw = msg.get("params")
-        params = params_raw if isinstance(params_raw, dict) else {}
 
-        if method == "ahp/handshake":
+        # --- JSON-RPC 2.0 path (a3s-code AHP protocol) ---
+        if method is not None:
+            params_raw = msg.get("params")
+            params = params_raw if isinstance(params_raw, dict) else {}
+
+            if method == "ahp/handshake":
+                if req_id is None:
+                    return None
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": self._handshake_result(),
+                }
+
+            try:
+                result = await self._handle_event(params)
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed handling AHP event")
+                if req_id is None:
+                    return None
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {
+                        "code": -32000,
+                        "message": "AHP harness internal error",
+                        "data": {"detail": "Internal harness error. Check server logs for details."},
+                    },
+                }
+
             if req_id is None:
                 return None
+
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
-                "result": self._handshake_result(),
+                "result": result,
             }
 
+        # --- Native hook path (Claude Code / direct hook command) ---
+        params = self._convert_native_hook(msg)
+        if self.async_mode:
+            # Dispatch in background — don't block the hook
+            asyncio.ensure_future(self._async_dispatch(params))
+            return {"result": {"action": "continue", "reason": "async: event dispatched"}}
         try:
             result = await self._handle_event(params)
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("Failed handling AHP event")
-            if req_id is None:
-                return None
-            return {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "error": {
-                    "code": -32000,
-                    "message": "AHP harness internal error",
-                    "data": {"detail": "Internal harness error. Check server logs for details."},
-                },
-            }
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed handling native hook event")
+            return {"result": {"action": "continue", "reason": "harness internal error"}}
+        return {"result": result}
 
-        if req_id is None:
-            return None
-
-        return {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": result,
-        }
+    async def _async_dispatch(self, params: dict[str, Any]) -> None:
+        """Background dispatch to gateway. Errors are logged, not raised."""
+        try:
+            await self._handle_event(params)
+        except Exception:  # noqa: BLE001
+            logger.debug("Async dispatch failed (non-blocking)", exc_info=True)
 
     def run_stdio(self) -> None:
         _log_stderr("harness started")
-        for raw_line in sys.stdin:
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError as exc:
-                _log_stderr(f"invalid json: {exc}")
-                continue
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            for raw_line in sys.stdin:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    _log_stderr(f"invalid json: {exc}")
+                    continue
 
-            response = asyncio.run(self.dispatch_async(msg))
-            if response is not None:
-                print(json.dumps(response, ensure_ascii=False), flush=True)
+                response = loop.run_until_complete(self.dispatch_async(msg))
+                if response is not None:
+                    print(json.dumps(response, ensure_ascii=False), flush=True)
+        finally:
+            # Wait for any --async background tasks to complete
+            pending = asyncio.all_tasks(loop)
+            if pending:
+                loop.run_until_complete(asyncio.wait(pending, timeout=5.0))
+            loop.close()
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -264,12 +337,24 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=int(os.getenv("A3S_GATEWAY_RETRY_BACKOFF_MS", "50")),
     )
     parser.add_argument(
+        "--framework",
+        default=os.getenv("CS_FRAMEWORK", "a3s-code"),
+        help="Source framework identifier (default: a3s-code).",
+    )
+    parser.add_argument(
         "--default-session-id",
         default=os.getenv("A3S_GATEWAY_DEFAULT_SESSION_ID", "ahp-session"),
     )
     parser.add_argument(
         "--default-agent-id",
         default=os.getenv("A3S_GATEWAY_DEFAULT_AGENT_ID", "ahp-agent"),
+    )
+    parser.add_argument(
+        "--async",
+        dest="async_mode",
+        action="store_true",
+        default=False,
+        help="Return immediately for native hook events (fire-and-forget).",
     )
     return parser
 
@@ -283,11 +368,13 @@ def main() -> None:
         default_deadline_ms=args.default_deadline_ms,
         max_rpc_retries=args.max_rpc_retries,
         retry_backoff_ms=args.retry_backoff_ms,
+        source_framework=args.framework,
     )
     harness = A3SGatewayHarness(
         adapter,
         default_session_id=args.default_session_id,
         default_agent_id=args.default_agent_id,
+        async_mode=args.async_mode,
     )
     harness.run_stdio()
 

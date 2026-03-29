@@ -8,6 +8,7 @@ E-4 extension: D6 injection detection multiplier (2026-03-24).
 from __future__ import annotations
 
 import re
+from collections import deque
 from typing import Optional
 
 from .detection_config import DetectionConfig
@@ -345,10 +346,10 @@ class SessionRiskTracker:
         self._freq_repetitive_count = freq_repetitive_count
         self._freq_repetitive_window_s = freq_repetitive_window_s
         self._freq_rate_limit_per_min = freq_rate_limit_per_min
-        # Per-session → per-tool → list of timestamps
-        self._tool_calls: dict[str, dict[str, list[float]]] = {}
-        # Per-session → list of all-tool timestamps
-        self._all_calls: dict[str, list[float]] = {}
+        # Per-session → per-tool → deque of timestamps (O(1) popleft)
+        self._tool_calls: dict[str, dict[str, deque[float]]] = {}
+        # Per-session → deque of all-tool timestamps
+        self._all_calls: dict[str, deque[float]] = {}
 
     def record_high_risk_event(self, session_id: str) -> None:
         self._high_risk_counts[session_id] = (
@@ -358,41 +359,63 @@ class SessionRiskTracker:
 
     def _evict_if_needed(self) -> None:
         """Evict oldest entries (by insertion order) when over capacity."""
-        while len(self._high_risk_counts) > self._max_sessions:
-            oldest_key = next(iter(self._high_risk_counts))
-            del self._high_risk_counts[oldest_key]
+        # Check all session dicts to prevent unbounded growth
+        all_session_ids = (
+            set(self._high_risk_counts)
+            | set(self._tool_calls)
+            | set(self._all_calls)
+        )
+        while len(all_session_ids) > self._max_sessions:
+            # Prefer evicting from high_risk_counts first (insertion-ordered)
+            if self._high_risk_counts:
+                oldest_key = next(iter(self._high_risk_counts))
+                del self._high_risk_counts[oldest_key]
+            elif self._tool_calls:
+                oldest_key = next(iter(self._tool_calls))
+            elif self._all_calls:
+                oldest_key = next(iter(self._all_calls))
+            else:
+                break
             self._tool_calls.pop(oldest_key, None)
             self._all_calls.pop(oldest_key, None)
+            all_session_ids.discard(oldest_key)
 
     def record_tool_call(self, session_id: str, tool_name: str, now: float | None = None) -> None:
         """Record a tool invocation for frequency analysis."""
         if not self._freq_enabled:
             return
-        import time as _time
-        ts = now if now is not None else _time.monotonic()
+        import time
+        ts = now if now is not None else time.monotonic()
 
         # Per-tool timestamps
         session_tools = self._tool_calls.setdefault(session_id, {})
-        tool_ts = session_tools.setdefault(tool_name, [])
+        if tool_name not in session_tools:
+            session_tools[tool_name] = deque()
+        tool_ts = session_tools[tool_name]
         tool_ts.append(ts)
         # Trim to repetitive window (the larger window)
         cutoff = ts - self._freq_repetitive_window_s
         while tool_ts and tool_ts[0] < cutoff:
-            tool_ts.pop(0)
+            tool_ts.popleft()
 
         # All-tool timestamps
-        all_ts = self._all_calls.setdefault(session_id, [])
+        if session_id not in self._all_calls:
+            self._all_calls[session_id] = deque()
+        all_ts = self._all_calls[session_id]
         all_ts.append(ts)
         rate_cutoff = ts - 60.0
         while all_ts and all_ts[0] < rate_cutoff:
-            all_ts.pop(0)
+            all_ts.popleft()
+
+        # Evict oldest sessions when over capacity
+        self._evict_if_needed()
 
     def _get_frequency_d4(self, session_id: str, now: float | None = None) -> int:
         """Compute D4 contribution from tool-call frequency."""
         if not self._freq_enabled:
             return 0
-        import time as _time
-        ts = now if now is not None else _time.monotonic()
+        import time
+        ts = now if now is not None else time.monotonic()
         freq_d4 = 0
 
         # Burst detection: same tool >= N in burst window

@@ -19,7 +19,11 @@ from clawsentry.gateway.review_skills import SkillRegistry
 from clawsentry.gateway.review_toolkit import ReadOnlyToolkit
 
 
-class StubTrajectoryStore:
+from .conftest import StubTrajectoryStore as _BaseStubStore
+
+
+class StubTrajectoryStore(_BaseStubStore):
+    """Extends shared stub with richer event data for agent analyzer tests."""
     def replay_session(self, session_id, limit=100):
         return [
             {

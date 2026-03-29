@@ -51,6 +51,7 @@ from .models import (
     SyncDecisionResponse,
     utc_now_iso,
 )
+from .defer_manager import DeferManager
 from .detection_config import DetectionConfig, build_detection_config_from_env
 from .llm_factory import build_analyzer_from_env
 from .pattern_evolution import PatternEvolutionManager
@@ -1031,6 +1032,11 @@ class SupervisionGateway:
             max_events_per_session=self._detection_config.trajectory_max_events,
             max_sessions=self._detection_config.trajectory_max_sessions,
         )
+        # E-9: DEFER timeout manager
+        self.defer_manager = DeferManager(
+            timeout_action=self._detection_config.defer_timeout_action,
+            timeout_s=self._detection_config.defer_timeout_s,
+        )
         # E-5: Self-evolving pattern repository
         self.evolution_manager = PatternEvolutionManager(
             store_path=self._detection_config.evolved_patterns_path or "",
@@ -1143,6 +1149,7 @@ class SupervisionGateway:
                     deadline_budget_ms=remaining_ms,
                 )
             except Exception:
+                logger.exception("Policy engine error during enforcement snapshot")
                 from .policy_engine import RiskSnapshot
                 snapshot = RiskSnapshot()
             actual_tier = DecisionTier.L1
@@ -1376,7 +1383,7 @@ class SupervisionGateway:
 
         # --- E-5: Extract candidate pattern from confirmed high-risk events ---
         if (
-            self.evolution_manager._enabled
+            self.evolution_manager.enabled
             and req.event.event_type == EventType.PRE_ACTION
             and decision.risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL)
         ):
@@ -1600,6 +1607,8 @@ class SupervisionGateway:
 class _RateLimiter:
     """Simple sliding-window rate limiter per client identifier."""
 
+    _MAX_CLIENTS = 10_000  # Prevent unbounded memory growth
+
     def __init__(self, max_requests: int, window_seconds: float):
         self._max = max_requests
         self._window = window_seconds
@@ -1613,6 +1622,10 @@ class _RateLimiter:
         if len(bucket) >= self._max:
             return False
         bucket.append(now)
+        # Evict stale clients to prevent unbounded growth
+        if len(self._buckets) > self._MAX_CLIENTS:
+            oldest_key = next(iter(self._buckets))
+            del self._buckets[oldest_key]
         return True
 
 
@@ -1728,6 +1741,50 @@ def create_http_app(
         if response is None:
             return Response(status_code=204)
         return response
+
+    # --- Codex HTTP transport (E-9 Phase 2) ---
+    from ..adapters.codex_adapter import CodexAdapter
+    _codex_adapter = CodexAdapter()
+    _codex_in_process = InProcessA3SAdapter(gateway)
+
+    @app.post("/ahp/codex")
+    async def ahp_codex_endpoint(request: Request):
+        auth_result = await verify_auth(request)
+        if isinstance(auth_result, Response):
+            return auth_result
+        rl_result = _check_rate_limit(request)
+        if rl_result is not None:
+            return rl_result
+        try:
+            body = await request.json()
+        except Exception:
+            return Response(
+                content=json.dumps({"error": "invalid JSON body"}),
+                status_code=400,
+                media_type="application/json",
+            )
+
+        event = _codex_adapter.normalize_hook_event(
+            hook_type=body.get("event_type", ""),
+            payload=body.get("payload", {}),
+            session_id=body.get("session_id"),
+            agent_id=body.get("agent_id"),
+        )
+        if event is None:
+            return {"result": {"action": "continue", "reason": "unrecognized event type"}}
+
+        # Route through in-process Gateway evaluation
+        try:
+            decision = await _codex_in_process.request_decision(event)
+            return {"result": {
+                "action": decision.decision.value,
+                "reason": decision.reason,
+                "risk_level": decision.risk_level.value,
+            }}
+        except Exception:
+            logger.exception("Codex endpoint evaluation failed")
+            # Fail-closed: block on evaluation error to prevent unsafe operations
+            return {"result": {"action": "block", "reason": "evaluation error (fail-closed)"}}
 
     @app.get("/health")
     async def health_endpoint():
