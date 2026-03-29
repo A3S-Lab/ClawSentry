@@ -199,20 +199,59 @@ class A3SGatewayHarness:
         return _decision_to_ahp_result(decision)
 
     def _convert_native_hook(self, msg: dict[str, Any]) -> dict[str, Any]:
-        """Convert native Claude Code hook JSON to harness event params."""
+        """Convert native Claude Code hook JSON to harness event params.
+
+        Claude Code sends hooks with this stdin format::
+
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "ls -la"},
+                "session_id": "...",
+                "cwd": "/workspace",
+                ...
+            }
+
+        We need to map this to our internal params format::
+
+            {
+                "event_type": "pre_tool_use",
+                "session_id": "...",
+                "payload": {"tool": "Bash", "arguments": {"command": "ls -la"}, ...}
+            }
+        """
         params: dict[str, Any] = {}
 
-        # event_type can be top-level or inferred from hook_type
-        event_type = msg.get("event_type") or msg.get("hook_type", "")
+        # event_type: Claude Code uses "hook_event_name", others use "event_type"/"hook_type"
+        event_type = (
+            msg.get("event_type")
+            or msg.get("hook_event_name")
+            or msg.get("hook_type", "")
+        )
         # Normalize CamelCase: PreToolUse -> pre_tool_use
         if event_type and not event_type.islower():
             event_type = _camel_to_snake(event_type)
         params["event_type"] = event_type
 
-        # payload can be nested or the msg itself is the payload
+        # payload: Claude Code sends tool_name/tool_input at top level, not nested
         payload = msg.get("payload")
         if payload is None:
-            payload = {k: v for k, v in msg.items() if k not in ("event_type", "hook_type")}
+            # Build payload from Claude Code's flat structure
+            payload: dict[str, Any] = {}
+            tool_name = msg.get("tool_name")
+            if tool_name:
+                payload["tool"] = tool_name
+            tool_input = msg.get("tool_input")
+            if isinstance(tool_input, dict):
+                payload["arguments"] = tool_input
+                # Lift common fields for risk assessment
+                for key in ("command", "file_path", "path"):
+                    if key in tool_input and key not in payload:
+                        payload[key] = tool_input[key]
+            # Carry over other context fields
+            for key in ("cwd", "working_directory", "permission_mode", "transcript_path"):
+                if key in msg:
+                    payload[key] = msg[key]
         params["payload"] = payload
 
         # Lift session_id / agent_id to params level for _handle_event
@@ -269,16 +308,55 @@ class A3SGatewayHarness:
 
         # --- Native hook path (Claude Code / direct hook command) ---
         params = self._convert_native_hook(msg)
+        is_claude_code_hook = "hook_event_name" in msg
         if self.async_mode:
             # Dispatch in background — don't block the hook
             asyncio.ensure_future(self._async_dispatch(params))
+            if is_claude_code_hook:
+                return None  # Claude Code: exit 0 = allow
             return {"result": {"action": "continue", "reason": "async: event dispatched"}}
         try:
             result = await self._handle_event(params)
         except Exception:  # noqa: BLE001
             logger.exception("Failed handling native hook event")
+            if is_claude_code_hook:
+                return None  # allow on error (fail-open for hooks)
             return {"result": {"action": "continue", "reason": "harness internal error"}}
+
+        if is_claude_code_hook:
+            return self._to_claude_code_response(result, msg.get("hook_event_name", ""))
         return {"result": result}
+
+    def _to_claude_code_response(
+        self, result: dict[str, Any], hook_event_name: str,
+    ) -> dict[str, Any] | None:
+        """Convert internal decision to Claude Code hook response format.
+
+        Claude Code PreToolUse hooks control execution via:
+        - Return None → exit 0 → allow
+        - Return hookSpecificOutput with permissionDecision: "deny" → block
+        - Exit code 2 → block (handled by run_stdio)
+
+        We use the hookSpecificOutput approach for richer feedback.
+        """
+        action = result.get("action", "continue")
+        if action in ("continue", "allow"):
+            return None  # exit 0 = allow
+
+        if action in ("block", "defer"):
+            reason = result.get("reason", "Blocked by ClawSentry security policy")
+            risk_level = result.get("metadata", {}).get("risk_level", "unknown")
+            return {
+                "hookSpecificOutput": {
+                    "hookEventName": hook_event_name,
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": (
+                        f"[ClawSentry] {reason} (risk: {risk_level})"
+                    ),
+                },
+            }
+
+        return None  # unknown action = allow
 
     async def _async_dispatch(self, params: dict[str, Any]) -> None:
         """Background dispatch to gateway. Errors are logged, not raised."""
