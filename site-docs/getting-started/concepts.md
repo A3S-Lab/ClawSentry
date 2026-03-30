@@ -532,7 +532,22 @@ sequenceDiagram
 | **PERSISTENCE** | 持久化 | 修改 `.bashrc`/crontab/systemd → 写入后门 |
 | **DATA_STAGING** | 数据预备外泄 | 大量文件聚合压缩 → 准备传输 |
 
-当模式分达到阈值时触发告警，通过 EventBus 推送到 watch CLI / Web UI / Latch。
+每种模式都有阶段权重，当模式分 ≥ threshold 时触发告警。
+
+### 与 Post-action 的关系
+
+```mermaid
+graph TD
+    PA["PostActionAnalyzer<br/>单事件扫描"] --> ALERT1[单次告警]
+    TA["TrajectoryAnalyzer<br/>跨事件序列分析"] --> ALERT2[模式告警]
+    ALERT1 --> EB[EventBus]
+    ALERT2 --> EB
+    EB --> W[watch CLI]
+    EB --> UI[Web UI]
+    EB --> L[Latch]
+```
+
+两者均为**异步、非阻塞**，互为补充：Post-action 针对单次事件的输出内容扫描，TrajectoryAnalyzer 在时间序列维度检测多步攻击链。
 
 ### 配置
 
