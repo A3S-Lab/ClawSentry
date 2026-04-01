@@ -83,7 +83,7 @@ def load_patterns(
         logger.warning("Failed to load attack patterns from %s: file not found", file_path)
         return []
     try:
-        with open(file_path) as f:
+        with open(file_path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         if not data or "patterns" not in data:
             patterns: list[AttackPattern] = []

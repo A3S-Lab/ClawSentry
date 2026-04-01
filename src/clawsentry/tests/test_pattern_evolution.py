@@ -74,7 +74,7 @@ class TestDualSourceLoading:
 
     def _write_evolved_yaml(self, tmp_path, patterns):
         path = os.path.join(str(tmp_path), "evolved.yaml")
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             yaml.dump({"version": "1.0", "patterns": patterns, "evolved": True}, f)
         return path
 
@@ -128,7 +128,7 @@ class TestDualSourceLoading:
 
     def test_load_patterns_corrupt_evolved_file_ignored(self, tmp_path):
         path = os.path.join(str(tmp_path), "bad.yaml")
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write("{{invalid yaml")
         patterns = load_patterns(evolved_path=path)
         assert len(patterns) >= 25  # core still loads fine
@@ -212,7 +212,7 @@ class TestEvolvedPatternStore:
         store.save()
 
         # Verify YAML is valid
-        with open(store_path) as f:
+        with open(store_path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         assert data["version"] == "1.0"
         assert len(data["patterns"]) == 1

@@ -487,20 +487,22 @@ async def run_stack(args: argparse.Namespace) -> None:
             logger.exception("Failed to start OpenClaw WS enforcement listener")
 
     if openclaw_mode:
+        uds_info = f"uds={args.uds_path}" if uds_server else "uds=disabled(Windows)"
         logger.info(
-            "Full stack starting: gateway=http://%s:%s/ahp uds=%s webhook=http://%s:%s/webhook/openclaw",
+            "Full stack starting: gateway=http://%s:%s/ahp %s webhook=http://%s:%s/webhook/openclaw",
             args.gateway_host,
             args.gateway_port,
-            args.uds_path,
+            uds_info,
             args.webhook_host,
             args.webhook_port,
         )
     else:
+        uds_info = f"uds={args.uds_path}" if uds_server else "uds=disabled(Windows)"
         logger.info(
-            "Gateway-only starting: gateway=http://%s:%s/ahp uds=%s (no OpenClaw config detected)",
+            "Gateway-only starting: gateway=http://%s:%s/ahp %s (no OpenClaw config detected)",
             args.gateway_host,
             args.gateway_port,
-            args.uds_path,
+            uds_info,
         )
 
     tasks: set[asyncio.Task] = set()
@@ -550,8 +552,9 @@ async def run_stack(args: argparse.Namespace) -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await cleanup_task
 
-        uds_server.close()
-        await uds_server.wait_closed()
+        if uds_server is not None:
+            uds_server.close()
+            await uds_server.wait_closed()
         if os.path.exists(args.uds_path):
             os.unlink(args.uds_path)
 

@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import struct
+import sys
 import time
 from typing import Any, Optional, Literal
 
@@ -143,6 +144,9 @@ class OpenClawGatewayClient:
 
     async def _send_uds_request(self, req: SyncDecisionRequest) -> dict[str, Any]:
         """Send JSON-RPC 2.0 request over UDS."""
+        if sys.platform == "win32":
+            raise OSError("UDS not supported on Windows")
+
         jsonrpc_body = json.dumps({
             "jsonrpc": "2.0",
             "id": 1,

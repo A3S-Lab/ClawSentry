@@ -120,7 +120,7 @@ def launch_gateway(
     """Start the gateway as a background subprocess."""
     env = {**os.environ, **(extra_env or {})}
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(log_path, "w") as log_fh:
+    with open(log_path, "w", encoding="utf-8") as log_fh:
         proc = subprocess.Popen(
             [
                 sys.executable, "-m", "clawsentry.gateway.stack",

@@ -21,7 +21,7 @@ from clawsentry.gateway.pattern_matcher import (
 def _write_yaml(tmp_path: str, content: str) -> str:
     """Write YAML content to a temp file and return its path."""
     path = os.path.join(tmp_path, "patterns.yaml")
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(content)
     return path
 
@@ -732,7 +732,7 @@ patterns:
 """
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "patterns.yaml")
-            with open(path, "w") as f:
+            with open(path, "w", encoding="utf-8") as f:
                 f.write(yaml_content)
             pm = PatternMatcher(patterns_path=path)
             hits = pm.match(

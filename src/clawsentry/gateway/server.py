@@ -20,6 +20,7 @@ import argparse
 import logging
 import os
 import struct
+import sys
 import time
 from typing import Any, Callable, Optional
 
@@ -1528,8 +1529,12 @@ async def _uds_client_handler(
 async def start_uds_server(
     gateway: SupervisionGateway,
     path: str = DEFAULT_UDS_PATH,
-) -> asyncio.AbstractServer:
-    """Start the Unix Domain Socket server."""
+) -> Optional[asyncio.AbstractServer]:
+    """Start the Unix Domain Socket server (Unix/Linux/macOS only)."""
+    if sys.platform == "win32":
+        logger.warning("UDS not supported on Windows, using HTTP transport only")
+        return None
+
     # Remove stale socket file
     if os.path.exists(path):
         os.unlink(path)

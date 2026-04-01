@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import struct
+import sys
 import time
 import uuid
 from typing import Any, Optional
@@ -358,6 +359,9 @@ class A3SCodeAdapter:
 
     async def _send_uds_request(self, req: SyncDecisionRequest) -> dict[str, Any]:
         """Send a JSON-RPC 2.0 request over UDS with length-prefixed framing."""
+        if sys.platform == "win32":
+            raise OSError("UDS not supported on Windows")
+
         jsonrpc_body = json.dumps({
             "jsonrpc": "2.0",
             "id": 1,

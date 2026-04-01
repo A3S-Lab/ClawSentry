@@ -6,6 +6,29 @@
 
 ---
 
+## [0.3.2] — 2026-04-01
+
+### 新增
+
+- **Windows 平台支持**：UDS 服务器和客户端适配器在 Windows 上自动降级到 HTTP-only 模式，避免 `asyncio.start_unix_server` 不可用错误
+- 新增 2 个 Windows 兼容性测试（`test_windows_compatibility.py`）
+
+### 修复
+
+- **Windows 编码支持**：所有文件 I/O 操作显式指定 UTF-8 编码，修复 Windows 系统 GBK 默认编码导致的 `attack_patterns.yaml` 加载失败问题
+- Gateway 在 Windows 上启动时日志显示 `uds=disabled(Windows)` 而非崩溃
+- 适配器在 Windows 上自动使用本地 fallback 决策，保证基本安全监督功能
+
+### 文档
+
+- 新增 `docs/deployment/WINDOWS_DEPLOYMENT.md` — Windows 部署指南，包含路径配置、编码问题、环境变量设置等
+
+### 测试
+
+- 测试套件：2171 passed, 1 skipped (~33s)
+
+---
+
 ## [0.3.1] — 2026-03-31
 
 ### 修复
@@ -520,6 +543,7 @@
 - 775 个测试用例，覆盖单元测试 + 集成测试 + E2E 测试
 - 测试通过时间 ~6.5s
 
+[0.3.2]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.2
 [0.3.1]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.1
 [0.3.0]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.0
 [0.2.9]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.2.9
