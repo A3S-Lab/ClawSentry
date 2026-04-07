@@ -71,15 +71,16 @@ def _c(name: str, text: str, *, color: bool = True) -> str:
 def _timestamp_hms(ts: str | None) -> str:
     """Extract ``HH:MM:SS`` from an ISO-8601 timestamp string.
 
-    Falls back to the current UTC time if the string cannot be parsed.
+    Converts to the local timezone before formatting.
+    Falls back to the current local time if the string cannot be parsed.
     """
     if ts:
         try:
             dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-            return dt.strftime("%H:%M:%S")
+            return dt.astimezone().strftime("%H:%M:%S")
         except (ValueError, AttributeError):
             pass
-    return datetime.now(timezone.utc).strftime("%H:%M:%S")
+    return datetime.now().strftime("%H:%M:%S")
 
 
 def _truncate(text: str, max_len: int = _CMD_MAX_LEN) -> str:
@@ -655,6 +656,38 @@ async def handle_defer_interactive(
 _RECONNECT_DELAY = 3.0
 
 
+def _prefetch_sessions(
+    tracker: SessionTracker,
+    gateway_url: str,
+    headers: dict[str, str],
+) -> None:
+    """Pre-populate session info from ``/report/sessions`` (best-effort).
+
+    This avoids "Framework: unknown" when ``watch`` connects after sessions
+    have already started (CS-024).
+    """
+    sessions_url = f"{gateway_url.rstrip('/')}/report/sessions"
+    try:
+        req = urllib.request.Request(sessions_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        for s in data.get("sessions", []):
+            sid = s.get("session_id")
+            if not sid:
+                continue
+            tracker.session_info[sid] = {
+                "agent_id": str(s.get("agent_id") or "unknown"),
+                "framework": str(
+                    s.get("source_framework")
+                    or s.get("caller_adapter")
+                    or "unknown"
+                ),
+                "started": _timestamp_hms(s.get("first_event_at")),
+            }
+    except Exception:
+        pass  # Best-effort; watch still works without pre-populated info
+
+
 def run_watch(
     gateway_url: str,
     token: str | None = None,
@@ -701,6 +734,10 @@ def run_watch(
         headers["Authorization"] = f"Bearer {token}"
 
     tracker = SessionTracker()
+
+    # CS-024: Pre-populate session info from existing sessions so that
+    # "Framework: unknown" doesn't appear when watch connects mid-session.
+    _prefetch_sessions(tracker, gateway_url, headers)
 
     while True:
         try:

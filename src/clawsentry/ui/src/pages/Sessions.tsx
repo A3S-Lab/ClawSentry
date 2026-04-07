@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { RefreshCw, Users } from 'lucide-react'
 import { api } from '../api/client'
+import { createManagedSSE } from '../api/sse'
 import { RiskBadge } from '../components/badges'
 import EmptyState from '../components/EmptyState'
 import type { SessionSummary } from '../api/types'
@@ -57,6 +58,7 @@ export default function Sessions() {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [minRisk, setMinRisk] = useState<string>('')
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -67,9 +69,31 @@ export default function Sessions() {
     setLoading(false)
   }, [minRisk])
 
+  // Initial load
   useEffect(() => { load() }, [load])
+
+  // SSE-driven refresh: reload session list when decision/session events arrive.
+  // Debounced to avoid hammering the API during bursts.
   useEffect(() => {
-    const timer = setInterval(load, 15_000)
+    const cleanup = createManagedSSE(
+      ['decision', 'session_start', 'session_end', 'risk_change'],
+      {
+        onEvent: () => {
+          if (debounceRef.current) clearTimeout(debounceRef.current)
+          debounceRef.current = setTimeout(() => { load() }, 500)
+        },
+        onStatusChange: () => { /* status tracked elsewhere */ },
+      },
+    )
+    return () => {
+      cleanup()
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [load])
+
+  // Fallback poll every 30s in case SSE disconnects silently
+  useEffect(() => {
+    const timer = setInterval(load, 30_000)
     return () => clearInterval(timer)
   }, [load])
 

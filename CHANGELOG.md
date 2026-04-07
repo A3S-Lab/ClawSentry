@@ -6,6 +6,23 @@
 
 ---
 
+## [0.3.4] — 2026-04-08
+
+### 修复
+
+- **[CS-024]** `clawsentry watch` 加入已有会话时显示 "Framework: unknown" — 连接时预取 `/report/sessions` 已有会话信息
+- **[CS-022/CS-026]** Web UI Sessions 页面 15s 轮询延迟过高 — 改用 SSE 实时推送（`createManagedSSE`），500ms 防抖，30s fallback 轮询兜底
+
+### 文档
+
+- 集成指南新增 `test-llm` CLI 使用说明
+
+### 测试
+
+- 测试套件：2201 passed, 2 skipped (~33s)
+
+---
+
 ## [0.3.3] — 2026-04-07
 
 ### 新增
@@ -562,6 +579,10 @@
 - 775 个测试用例，覆盖单元测试 + 集成测试 + E2E 测试
 - 测试通过时间 ~6.5s
 
+[0.3.4]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.4
+[0.3.3]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.3
+[0.3.4]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.4
+[0.3.3]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.3
 [0.3.2]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.2
 [0.3.1]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.1
 [0.3.0]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.0

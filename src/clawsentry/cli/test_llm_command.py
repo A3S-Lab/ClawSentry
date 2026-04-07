@@ -143,7 +143,7 @@ async def _test_l2(provider, timeout_ms: float = 15000) -> tuple[bool, float, st
 
     start = time.monotonic()
     try:
-        result = await analyzer.analyze(event, l1_snapshot, budget_ms=timeout_ms)
+        result = await analyzer.analyze(event, None, l1_snapshot, budget_ms=timeout_ms)
         latency = (time.monotonic() - start) * 1000
         detail = f"risk={result.risk_level.value}, confidence={result.confidence:.2f}, reason={result.reason[:60]}"
         return True, latency, detail
@@ -202,7 +202,7 @@ async def _test_l3(provider, timeout_ms: float = 30000) -> tuple[bool, float, st
 
     start = time.monotonic()
     try:
-        result = await agent.analyze(event, l1_snapshot, budget_ms=timeout_ms)
+        result = await agent.analyze(event, None, l1_snapshot, budget_ms=timeout_ms)
         latency = (time.monotonic() - start) * 1000
         detail = f"risk={result.risk_level.value}, confidence={result.confidence:.2f}, reason={result.reason[:60]}"
         return True, latency, detail

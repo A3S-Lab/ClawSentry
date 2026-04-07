@@ -297,7 +297,12 @@ def validate_stack_config(
 
 
 def _detect_codex_session_dir() -> Optional[Path]:
-    """Auto-detect Codex session directory for session watcher."""
+    """Auto-detect Codex session directory for session watcher.
+
+    Codex watching is **opt-in**: it only activates when
+    ``CS_CODEX_SESSION_DIR`` is set explicitly, or when
+    ``CS_CODEX_WATCH_ENABLED`` is set to ``1``/``true``/``yes``.
+    """
     # 1. Explicit env var
     explicit = os.environ.get("CS_CODEX_SESSION_DIR")
     if explicit:
@@ -307,8 +312,8 @@ def _detect_codex_session_dir() -> Optional[Path]:
         logger.warning("CS_CODEX_SESSION_DIR=%s does not exist", explicit)
         return None
 
-    # 2. Disabled explicitly
-    if os.environ.get("CS_CODEX_WATCH_ENABLED", "").lower() in ("0", "false", "no"):
+    # 2. Opt-in: only auto-detect when explicitly enabled
+    if os.environ.get("CS_CODEX_WATCH_ENABLED", "").lower() not in ("1", "true", "yes"):
         return None
 
     # 3. Auto-detect from CODEX_HOME or ~/.codex

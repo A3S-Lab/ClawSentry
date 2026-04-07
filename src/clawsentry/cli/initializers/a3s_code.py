@@ -65,7 +65,13 @@ class A3SCodeInitializer:
         next_steps = [
             f"source {ENV_FILE_NAME}",
             "clawsentry gateway    # starts on UDS + HTTP port 8080",
-            "python your_agent_script.py    # .a3s-code/settings.json auto-loaded",
+            (
+                "# In your agent script, wire the transport explicitly:\n"
+                "    #   from a3s_code import Agent, HttpTransport, SessionOptions\n"
+                "    #   opts = SessionOptions()\n"
+                f'    #   opts.ahp_transport = HttpTransport("http://127.0.0.1:8080/ahp/a3s?token=$CS_AUTH_TOKEN")\n'
+                "    #   session = agent.session(\".\", opts, ...)"
+            ),
             "clawsentry watch --token \"$CS_AUTH_TOKEN\"    # real-time monitoring",
         ]
 

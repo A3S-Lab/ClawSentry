@@ -17,8 +17,13 @@ def run_init(
     setup: bool = False,
     dry_run: bool = False,
     openclaw_home: Path | None = None,
+    quiet: bool = False,
 ) -> int:
-    """Run init and print results. Returns exit code (0=ok, 1=error)."""
+    """Run init and print results. Returns exit code (0=ok, 1=error).
+
+    When *quiet* is ``True`` (e.g. called from ``clawsentry start``),
+    only a one-line confirmation is printed instead of the full banner.
+    """
     # --setup implies --auto-detect
     if setup:
         auto_detect = True
@@ -41,6 +46,10 @@ def run_init(
     except FileExistsError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+
+    if quiet:
+        print(f"[clawsentry] {framework} integration auto-initialized.")
+        return 0
 
     print(f"[clawsentry] {framework} integration initialized\n")
 

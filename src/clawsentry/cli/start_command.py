@@ -104,6 +104,7 @@ def ensure_init(
         setup=(framework == "openclaw"),
         dry_run=False,
         openclaw_home=openclaw_home,
+        quiet=True,
     )
     if exit_code != 0:
         raise RuntimeError(f"Failed to initialize {framework} configuration")

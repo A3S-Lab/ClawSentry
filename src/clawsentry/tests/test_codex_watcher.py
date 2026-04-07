@@ -298,6 +298,16 @@ class TestDetectCodexSessionDir:
         from clawsentry.gateway.stack import _detect_codex_session_dir
         assert _detect_codex_session_dir() == sessions
 
+    def test_disabled_by_default(self, tmp_path, monkeypatch):
+        """Without CS_CODEX_WATCH_ENABLED, auto-detect is off (opt-in)."""
+        sessions = tmp_path / ".codex" / "sessions"
+        sessions.mkdir(parents=True)
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
+        monkeypatch.delenv("CS_CODEX_SESSION_DIR", raising=False)
+        monkeypatch.delenv("CS_CODEX_WATCH_ENABLED", raising=False)
+        from clawsentry.gateway.stack import _detect_codex_session_dir
+        assert _detect_codex_session_dir() is None
+
     def test_disabled_by_env(self, monkeypatch):
         monkeypatch.setenv("CS_CODEX_WATCH_ENABLED", "false")
         monkeypatch.delenv("CS_CODEX_SESSION_DIR", raising=False)
@@ -305,17 +315,18 @@ class TestDetectCodexSessionDir:
         assert _detect_codex_session_dir() is None
 
     def test_auto_detect_from_codex_home(self, tmp_path, monkeypatch):
+        """With CS_CODEX_WATCH_ENABLED=true, auto-detect works."""
         sessions = tmp_path / ".codex" / "sessions"
         sessions.mkdir(parents=True)
         monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
         monkeypatch.delenv("CS_CODEX_SESSION_DIR", raising=False)
-        monkeypatch.delenv("CS_CODEX_WATCH_ENABLED", raising=False)
+        monkeypatch.setenv("CS_CODEX_WATCH_ENABLED", "true")
         from clawsentry.gateway.stack import _detect_codex_session_dir
         assert _detect_codex_session_dir() == sessions
 
     def test_returns_none_when_no_sessions_dir(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CODEX_HOME", str(tmp_path / "nonexistent"))
         monkeypatch.delenv("CS_CODEX_SESSION_DIR", raising=False)
-        monkeypatch.delenv("CS_CODEX_WATCH_ENABLED", raising=False)
+        monkeypatch.setenv("CS_CODEX_WATCH_ENABLED", "true")
         from clawsentry.gateway.stack import _detect_codex_session_dir
         assert _detect_codex_session_dir() is None
