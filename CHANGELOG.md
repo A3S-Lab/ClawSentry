@@ -6,6 +6,25 @@
 
 ---
 
+## [0.3.3] — 2026-04-07
+
+### 新增
+
+- **`clawsentry test-llm` 命令**：LLM API 连通性和功能测试，支持 API 可达性、单次延迟、L2 语义分析、L3 Agent 审查四项测试，支持 `--json` 输出
+- **`clawsentry service` 命令**：一键安装/卸载系统自启服务，Linux 支持 systemd user service，macOS 支持 launchd user agent
+- **Web UI SSE 连接增强**：新增 `createManagedSSE()` 管理式连接，支持自动重连（指数退避）、连接状态指示器（connected/reconnecting/error）
+
+### 修复
+
+- **Web UI 事件不显示**：SSE 连接失败时静默失败，现在显示连接状态和错误信息，帮助用户排查问题
+
+### 测试
+
+- 新增 30 个测试（test-llm 19 + service 11）
+- 测试套件：2200 passed, 2 skipped (~33s)
+
+---
+
 ## [0.3.2] — 2026-04-01
 
 ### 新增

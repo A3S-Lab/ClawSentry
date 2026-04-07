@@ -232,6 +232,46 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Disable ANSI colour codes in output.",
     )
 
+    # --- test-llm ---
+    test_llm_parser = sub.add_parser(
+        "test-llm",
+        help="Test LLM API connectivity, latency, and L2/L3 functionality.",
+    )
+    test_llm_parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output results as JSON.",
+    )
+    test_llm_parser.add_argument(
+        "--no-color",
+        action="store_true",
+        default=False,
+        help="Disable ANSI colour codes in output.",
+    )
+    test_llm_parser.add_argument(
+        "--skip-l3",
+        action="store_true",
+        default=False,
+        help="Skip L3 agent review test.",
+    )
+
+    # --- service ---
+    service_parser = sub.add_parser(
+        "service",
+        help="Manage auto-start system service (systemd/launchd).",
+    )
+    service_sub = service_parser.add_subparsers(dest="service_command")
+    service_install = service_sub.add_parser("install", help="Install and enable auto-start service.")
+    service_install.add_argument(
+        "--no-enable",
+        action="store_true",
+        default=False,
+        help="Install service file without enabling/starting.",
+    )
+    service_sub.add_parser("uninstall", help="Stop and remove auto-start service.")
+    service_sub.add_parser("status", help="Show service status.")
+
     # --- config ---
     config_parser = sub.add_parser(
         "config",
@@ -456,6 +496,29 @@ def main(argv: list[str] | None = None) -> None:
             color=not args.no_color,
         )
         sys.exit(code)
+
+    elif args.command == "test-llm":
+        from .test_llm_command import run_test_llm
+
+        code = run_test_llm(
+            color=not args.no_color,
+            skip_l3=args.skip_l3,
+            json_mode=args.json,
+        )
+        sys.exit(code)
+
+    elif args.command == "service":
+        from .service_command import (
+            run_service_install, run_service_uninstall, run_service_status,
+        )
+        if args.service_command == "install":
+            sys.exit(run_service_install(no_enable=args.no_enable))
+        elif args.service_command == "uninstall":
+            sys.exit(run_service_uninstall())
+        elif args.service_command == "status":
+            sys.exit(run_service_status())
+        else:
+            print("Usage: clawsentry service {install,uninstall,status}")
 
     elif args.command == "config":
         from .config_command import (

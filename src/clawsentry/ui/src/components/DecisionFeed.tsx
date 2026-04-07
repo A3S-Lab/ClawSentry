@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
-import { connectSSE } from '../api/sse'
+import { createManagedSSE, type SSEStatus } from '../api/sse'
 import { DecisionBadge, RiskBadge } from './badges'
 import EmptyState from './EmptyState'
-import { Activity } from 'lucide-react'
+import { Activity, Wifi, WifiOff } from 'lucide-react'
 import type { SSEDecisionEvent } from '../api/types'
 
 function TierBadge({ tier }: { tier: string }) {
@@ -11,18 +11,45 @@ function TierBadge({ tier }: { tier: string }) {
   return <span className={`badge ${cls}`}>{t}</span>
 }
 
+function ConnectionStatus({ status, detail }: { status: SSEStatus; detail?: string }) {
+  if (status === 'connected') return null
+  const color = status === 'connecting' ? 'var(--color-amber)' :
+                status === 'disconnected' ? 'var(--color-amber)' : 'var(--color-red)'
+  const icon = status === 'error' ? <WifiOff size={10} /> : <Wifi size={10} />
+  const label = status === 'connecting' ? 'Connecting...' :
+                status === 'disconnected' ? (detail || 'Reconnecting...') :
+                (detail || 'Connection failed')
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 5,
+      padding: '4px 10px', fontSize: '0.65rem', color,
+      borderBottom: '1px solid var(--color-border)',
+    }}>
+      {icon}
+      <span className="mono">{label}</span>
+    </div>
+  )
+}
+
 export default function DecisionFeed() {
   const [events, setEvents] = useState<SSEDecisionEvent[]>([])
+  const [sseStatus, setSSEStatus] = useState<SSEStatus>('connecting')
+  const [statusDetail, setStatusDetail] = useState<string>()
 
   useEffect(() => {
-    const es = connectSSE(['decision'])
-    es.addEventListener('decision', (e: MessageEvent) => {
-      try {
-        const data: SSEDecisionEvent = JSON.parse(e.data)
-        setEvents(prev => [data, ...prev].slice(0, 60))
-      } catch { /* ignore */ }
-    })
-    return () => es.close()
+    const cleanup = createManagedSSE(
+      ['decision'],
+      {
+        onEvent: (_type, data) => {
+          setEvents(prev => [data as SSEDecisionEvent, ...prev].slice(0, 60))
+        },
+        onStatusChange: (status, detail) => {
+          setSSEStatus(status)
+          setStatusDetail(detail)
+        },
+      },
+    )
+    return cleanup
   }, [])
 
   return (
@@ -30,18 +57,24 @@ export default function DecisionFeed() {
       <div className="card-header">
         <Activity size={12} />
         Live Decision Feed
+        {sseStatus === 'connected' && (
+          <span style={{ marginLeft: 4, color: '#22c55e', fontSize: '0.5rem' }}>●</span>
+        )}
         {events.length > 0 && (
           <span className="mono" style={{ marginLeft: 'auto', color: 'var(--color-text-muted)', fontSize: '0.65rem' }}>
             {events.length} events
           </span>
         )}
       </div>
+      <ConnectionStatus status={sseStatus} detail={statusDetail} />
       <div style={{ flex: 1, overflowY: 'auto', maxHeight: 420 }}>
         {events.length === 0 ? (
           <EmptyState
             icon={<Activity size={20} />}
             title="Waiting for decisions"
-            subtitle="Real-time events will appear here as agents execute tools"
+            subtitle={sseStatus === 'connected'
+              ? 'Real-time events will appear here as agents execute tools'
+              : 'Establishing connection to gateway...'}
           />
         ) : (
           events.map((evt, i) => (
