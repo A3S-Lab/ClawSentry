@@ -8,16 +8,16 @@
 
 a3s-code 是一个 AI 编码代理框架，拥有完整的 Hook 系统（11 种事件类型）。ClawSentry 通过 **AHP (Agent Harness Protocol)** 协议拦截 a3s-code 的 `PreToolUse` / `PostToolUse` 等事件，由三层决策引擎（L1 规则 / L2 语义 / L3 Agent）实时评估风险并返回 allow / block / defer 判决。
 
-ClawSentry 提供两种 Transport 模式接入 a3s-code：
+ClawSentry 提供三种方式接入 a3s-code：
 
-| 特性 | stdio 管道 (推荐) | HTTP 直连 |
-|------|:------------------:|:---------:|
-| **延迟** | ~3-5ms | ~5-10ms |
-| **可靠性** | 高（本地进程） | 高（HTTP 请求） |
-| **配置复杂度** | 中等 | 低 |
-| **网络依赖** | 无（UDS 本地套接字） | 需要网络访问 Gateway |
-| **决策链路** | a3s-code → stdin → harness → Gateway(UDS) → 决策 → stdout → a3s-code | a3s-code → HTTP POST → Gateway → 决策 → HTTP 响应 |
-| **适用场景** | 生产环境、需要最低延迟 | 快速验证、远程 Gateway |
+| 特性 | SDK Transport (推荐) | stdio 管道 | HTTP Hook (settings.json) |
+|------|:--------------------:|:----------:|:-------------------------:|
+| **延迟** | ~5-10ms | ~3-5ms | ~5-10ms |
+| **可靠性** | 高 | 高（本地进程） | 高 |
+| **配置复杂度** | 最低（纯代码） | 中等（harness + UDS） | 低（JSON 配置） |
+| **网络依赖** | 需要访问 Gateway | 无（UDS 本地套接字） | 需要访问 Gateway |
+| **决策链路** | Agent SDK → `HttpTransport` → Gateway → 决策 → SDK | a3s-code → stdin → harness → Gateway(UDS) → 决策 → stdout | a3s-code → HTTP POST → Gateway → 决策 → HTTP 响应 |
+| **适用场景** | 新项目、SDK 集成 | 需要最低延迟、已有 UDS 基础设施 | 快速验证、远程 Gateway |
 
 ---
 
@@ -91,11 +91,44 @@ Gateway 同时监听以下端点：
 | `http://127.0.0.1:8080/ahp` | HTTP (JSON-RPC 2.0) | 通用 RPC 端点 |
 | `http://127.0.0.1:8080/ahp/a3s` | HTTP (AHP stdio 协议) | a3s-code HTTP 直连 |
 
-### 配置 a3s-code Hook
+### 接入 a3s-code
 
-a3s-code 通过 Hook 系统将工具调用事件发送给 ClawSentry。在 a3s-code 的配置文件（`.a3s-code/settings.json` 或等效配置）中添加 Hook：
+a3s-code 支持三种方式接入 ClawSentry。推荐使用 SDK Transport 方式，配置最简且与 a3s-code 最新 API 对齐。
 
-=== "stdio 管道（推荐）"
+=== "SDK Transport（推荐） :material-star:"
+
+    在 Agent 脚本中通过 `HttpTransport` 显式指定 AHP 端点：
+
+    ```python
+    from a3s_code import Agent, HttpTransport, SessionOptions
+
+    agent = Agent()
+    opts = SessionOptions()
+
+    # 将 AHP transport 指向 ClawSentry Gateway
+    opts.ahp_transport = HttpTransport(
+        "http://127.0.0.1:8080/ahp/a3s?token=$CS_AUTH_TOKEN"
+    )
+
+    session = agent.session(".", opts)
+    ```
+
+    !!! note "工作原理"
+        a3s-code SDK 内部在每次工具调用前后自动通过 `HttpTransport` 向 Gateway 发送 AHP 事件。无需配置 Hook JSON，无需启动独立 harness 进程。
+
+    !!! tip "Token 注入"
+        实际使用时将 `$CS_AUTH_TOKEN` 替换为环境变量读取：
+        ```python
+        import os
+        token = os.environ["CS_AUTH_TOKEN"]
+        opts.ahp_transport = HttpTransport(
+            f"http://127.0.0.1:8080/ahp/a3s?token={token}"
+        )
+        ```
+
+=== "stdio 管道"
+
+    在 a3s-code 的配置文件（`.a3s-code/settings.json`）中添加 Hook：
 
     ```json
     {
@@ -119,7 +152,9 @@ a3s-code 通过 Hook 系统将工具调用事件发送给 ClawSentry。在 a3s-c
     !!! note "工作原理"
         a3s-code 将每个 Hook 事件以 JSON-RPC 格式写入 `clawsentry-harness` 的 stdin，harness 解析后通过 UDS 转发到 Gateway，收到判决后将 JSON-RPC 响应写回 stdout。
 
-=== "HTTP 直连"
+=== "HTTP Hook"
+
+    在 `.a3s-code/settings.json` 中配置 HTTP 类型 Hook：
 
     ```json
     {

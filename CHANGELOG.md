@@ -8,17 +8,30 @@
 
 ## [0.3.4] — 2026-04-08
 
+### 变更（Breaking）
+
+- **Codex watcher 改为 opt-in** — `_detect_codex_session_dir()` 不再默认自动探测 Codex 会话目录；必须显式设置 `CS_CODEX_WATCH_ENABLED=true`（或 `1`/`yes`）才会启用自动探测。直接设置 `CS_CODEX_SESSION_DIR` 仍然生效。
+- **a3s-code 集成方式更新** — `clawsentry init a3s-code` 输出的 next_steps 不再建议 "settings.json auto-loaded"，改为显示 SDK Transport 显式接入代码（`HttpTransport` + `SessionOptions`），与 a3s-code 最新 API 对齐。
+
 ### 修复
 
 - **[CS-024]** `clawsentry watch` 加入已有会话时显示 "Framework: unknown" — 连接时预取 `/report/sessions` 已有会话信息
 - **[CS-022/CS-026]** Web UI Sessions 页面 15s 轮询延迟过高 — 改用 SSE 实时推送（`createManagedSSE`），500ms 防抖，30s fallback 轮询兜底
+- **`test-llm` L2/L3 调用签名修复** — `analyzer.analyze()` 和 `agent.analyze()` 新增缺失的第二参数（`None`），修复 `TypeError`
+- **`watch` 时间戳本地化** — `_timestamp_hms()` 从 UTC 改为本地时区显示
+
+### 改进
+
+- **`clawsentry start` 静默初始化** — `ensure_init()` 使用 `quiet=True`，自动初始化时只输出一行确认而非完整 banner
 
 ### 文档
 
 - 集成指南新增 `test-llm` CLI 使用说明
+- a3s-code 集成文档新增 SDK Transport 接入方式（`HttpTransport` + `SessionOptions`）
 
 ### 测试
 
+- 新增 `test_disabled_by_default` — 验证 Codex watcher 默认关闭行为
 - 测试套件：2201 passed, 2 skipped (~33s)
 
 ---
