@@ -39,6 +39,7 @@ class CodexInitializer:
             "CS_HTTP_PORT": port,
             "CS_AUTH_TOKEN": token,
             "CS_FRAMEWORK": "codex",
+            "CS_CODEX_WATCH_ENABLED": "true",
         }
 
         # Auto-detect Codex session directory

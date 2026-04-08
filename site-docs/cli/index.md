@@ -89,7 +89,7 @@ clawsentry start [--framework {a3s-code,claude-code,codex,openclaw}]
 
 `clawsentry start` 会自动执行以下步骤：
 
-1. **框架检测**：扫描 `~/.openclaw/openclaw.json` 或 `a3s-code` 配置文件，自动识别框架类型
+1. **框架检测**：优先读取 `.env.clawsentry` 中的 `CS_FRAMEWORK`，再扫描 OpenClaw / Claude Code 等已知配置，自动识别框架类型
 2. **配置初始化**：如果 `.env.clawsentry` 不存在，自动运行 `clawsentry init <framework>`
 3. **环境加载**：读取 `.env.clawsentry` 并注入环境变量
 4. **Gateway 启动**：后台启动 Gateway 进程，等待健康检查通过
@@ -106,15 +106,13 @@ clawsentry start
 
 ??? example "终端输出"
     ```
-    [clawsentry] Detected framework: openclaw
-    [clawsentry] Configuration already initialized
-    [clawsentry] Starting gateway on 127.0.0.1:8080...
-    INFO:     ahp-stack: === ClawSentry Supervision Gateway ===
-    INFO:     ahp-stack: HTTP      : 127.0.0.1:8080
-    INFO:     ahp-stack: OpenClaw  : WS ws://127.0.0.1:18789
-    INFO:     openclaw-ws: Connected to OpenClaw Gateway
+    ClawSentry starting...
+      Framework:  openclaw (auto-detected)
+      Gateway:    http://127.0.0.1:8080 (background)
+      Web UI:     http://127.0.0.1:8080/ui?token=xK7m9p2QaB3...
+      Log file:   /tmp/clawsentry-gateway.log
 
-    Web UI: http://127.0.0.1:8080/ui?token=xK7m9p2QaB3...
+    Gateway ready. Streaming events...
 
     ──────────────────────────────────────────────────────────────
     [14:23:05] DECISION  session=my-session
@@ -137,6 +135,7 @@ clawsentry start --no-watch
 ```
 
 此模式下，Gateway 在后台运行，命令立即返回。你可以稍后手动运行 `clawsentry watch` 查看事件。
+停止后台 Gateway 时运行 `clawsentry stop`。
 
 #### 启用交互式 DEFER 审批
 
@@ -168,7 +167,7 @@ Web UI: http://127.0.0.1:8080/ui?token=xK7m9p2QaB3...
 Gateway 的 stdout/stderr 输出会写入临时日志文件：
 
 ```
-/tmp/clawsentry-gateway-<timestamp>.log
+/tmp/clawsentry-gateway.log
 ```
 
 如果启动失败，命令会提示查看该日志文件。
@@ -219,15 +218,16 @@ clawsentry init a3s-code
         .env.clawsentry
 
       Environment variables:
+        CS_FRAMEWORK=a3s-code
         CS_UDS_PATH=/tmp/clawsentry.sock
         CS_AUTH_TOKEN=xK7m9p2QaB3...（自动生成 32 字符令牌）
 
       Next steps:
         1. source .env.clawsentry
-        2. clawsentry gateway    # starts on UDS + HTTP port 8080
-        3. Configure a3s-code AHP transport:
-          program: "clawsentry-harness"
-        4. clawsentry watch    # real-time terminal monitoring (port 8080)
+        2. export NO_PROXY=127.0.0.1,localhost
+        3. clawsentry gateway    # starts on UDS + HTTP port 8080
+        4. Configure a3s-code AHP transport explicitly in your agent script
+        5. clawsentry watch --token "$CS_AUTH_TOKEN"
     ```
 
 #### 初始化 OpenClaw 集成（自动检测令牌）
@@ -409,7 +409,7 @@ clawsentry harness [--uds-path PATH] [--default-deadline-ms MS]
 | 选项 | 环境变量 | 默认值 | 说明 |
 |------|----------|--------|------|
 | `--uds-path` | `CS_UDS_PATH` | `/tmp/clawsentry.sock` | Gateway UDS 路径 |
-| `--default-deadline-ms` | `A3S_GATEWAY_DEFAULT_DEADLINE_MS` | `100` | RPC 请求超时（毫秒） |
+| `--default-deadline-ms` | `A3S_GATEWAY_DEFAULT_DEADLINE_MS` | `4500` | RPC 请求超时（毫秒） |
 | `--max-rpc-retries` | `A3S_GATEWAY_MAX_RPC_RETRIES` | `1` | RPC 最大重试次数 |
 | `--retry-backoff-ms` | `A3S_GATEWAY_RETRY_BACKOFF_MS` | `50` | 重试间隔退避（毫秒） |
 | `--default-session-id` | `A3S_GATEWAY_DEFAULT_SESSION_ID` | `ahp-session` | 默认会话 ID |
@@ -443,7 +443,8 @@ clawsentry harness [--uds-path PATH] [--default-deadline-ms MS]
 当 Gateway 不可达时（UDS 连接失败或超时），Harness 会自动执行本地降级决策：
 
 - 包含 `destructive_pattern` 或 `shell_execution` 风险提示 → **BLOCK**
-- 其他情况 → **ALLOW**（fail-open，低危场景）
+- 其他 `pre_action` → **DEFER**（等待人工或上游重试）
+- `pre_prompt` / `post_action` / `post_response` / `session` / `error` → **ALLOW**（观察型事件 fail-open）
 
 ### 示例
 
@@ -895,7 +896,7 @@ clawsentry config init --preset high
 
 ??? example "终端输出"
     ```
-    Created .clawsentry.toml with preset: high
+    Created .clawsentry.toml (preset: high)
     ```
 
 #### 查看当前配置
@@ -906,9 +907,11 @@ clawsentry config show
 
 ??? example "终端输出"
     ```
-    Project config: .clawsentry.toml
       enabled: true
       preset:  high
+      threshold_critical: 1.8
+      threshold_high:     1.2
+      threshold_medium:   0.5
     ```
 
 #### 更改预设等级
@@ -927,7 +930,7 @@ clawsentry config enable
 ### `.clawsentry.toml` 文件格式
 
 ```toml
-[clawsentry]
+[project]
 enabled = true
 preset = "high"
 ```
@@ -1056,14 +1059,14 @@ clawsentry latch uninstall --keep-data
 | `clawsentry-stack` | `clawsentry stack` | `clawsentry.gateway.stack:main` |
 
 !!! tip "何时使用独立入口"
-    在 a3s-code 的 Hook 配置中，直接指定 `clawsentry-harness` 作为程序路径更为简洁：
-    ```hcl
-    hooks {
-      ahp {
-        transport = "stdio"
-        program   = "clawsentry-harness"
-      }
-    }
+    在 a3s-code SDK 代码中显式指定 `clawsentry-harness` 作为 `StdioTransport` 程序路径：
+    ```python
+    from a3s_code import Agent, SessionOptions, StdioTransport
+
+    agent = Agent.create("agent.hcl")
+    opts = SessionOptions()
+    opts.ahp_transport = StdioTransport(program="clawsentry-harness", args=[])
+    session = agent.session(".", opts, permissive=True)
     ```
 
 ---

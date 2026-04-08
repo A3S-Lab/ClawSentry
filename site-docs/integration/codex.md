@@ -114,8 +114,8 @@ SSE 广播 (决策/告警/风险变更)
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `CS_CODEX_SESSION_DIR` | (自动检测) | Codex 会话 JSONL 目录。默认从 `$CODEX_HOME/sessions` 检测 |
-| `CS_CODEX_WATCH_ENABLED` | `true` | 启用 Session Watcher |
+| `CS_CODEX_SESSION_DIR` | *(空)* | Codex 会话 JSONL 目录；显式设置时直接启用 Watcher |
+| `CS_CODEX_WATCH_ENABLED` | `false`（`init codex` 写入 `true`） | 启用 Session Watcher；未设置 `CS_CODEX_SESSION_DIR` 时允许 Gateway 从 `$CODEX_HOME/sessions` 自动探测 |
 | `CS_CODEX_WATCH_POLL_INTERVAL` | `1.0` | 轮询间隔（秒）。降低值提高实时性，增加 I/O 开销 |
 | `CS_FRAMEWORK` | (自动检测) | 设为 `codex` 启用 Codex 专用检查和 Watcher |
 
@@ -151,13 +151,13 @@ Codex 的 4 种事件类型映射到 AHP 规范事件：
 
 | Codex event_type | AHP 事件类型 | 子类型 | 说明 |
 |-------------------|-------------|--------|------|
-| `function_call` | `pre_action` | `pre_action` | **核心** — 工具执行前拦截评估 |
+| `function_call` | `pre_action` | `pre_action` | **核心** — 从 session 日志观察到的工具调用，用于风险评估和告警 |
 | `function_call_output` | `post_action` | `post_action` | 工具执行后审计分析 |
 | `session_meta` | `session` | `session:start` | 会话元数据（启动） |
 | `session_end` | `session` | `session:end` | 会话结束 |
 
 !!! info "Pre-action vs Post-action"
-    - **`function_call`（pre_action）**：在 Codex 执行工具调用之前发送。ClawSentry 评估风险并返回 `continue` 或 `block`。这是安全拦截的核心事件。
+    - **`function_call`（pre_action）**：Codex 将工具调用写入 session 日志后，ClawSentry 将其归一化为内部 `pre_action` 事件以复用风险评估管线。该路径是**监控/告警**，不会阻断 Codex 操作。
     - **`function_call_output`（post_action）**：在工具执行完成后发送。ClawSentry 记录审计日志并进行 Post-action 分析（检测数据泄露、间接注入等）。
 
 ---
@@ -522,7 +522,7 @@ http://{CS_HTTP_HOST}:{CS_HTTP_PORT}/ahp/codex
 
 | 特性 | Codex | Claude Code | a3s-code | OpenClaw |
 |------|:-----:|:-----------:|:--------:|:--------:|
-| 集成方式 | Session 日志监控 | Hook 注入 | Hook 配置 | WebSocket |
+| 集成方式 | Session 日志监控 | Hook 注入 | 显式 SDK Transport | WebSocket |
 | 自动拦截 | :x: 仅监控 | :white_check_mark: | :white_check_mark: | :white_check_mark: |
 | 需要修改 Codex 配置 | :x: 不需要 | — | — | — |
 | 审计记录 | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |

@@ -18,11 +18,11 @@ AHP (Agent Harness Protocol) reference implementation — a unified security sup
 - **Multi-step attack trajectory detection**: 5 built-in sequences with sliding-window analysis, SSE `trajectory_alert` broadcast
 - **Self-evolving pattern library (E-5)**: auto-extract candidates from high-risk events, CANDIDATE→EXPERIMENTAL→STABLE lifecycle, confidence scoring, REST API feedback loop
 - **Tunable detection pipeline**: `DetectionConfig` frozen dataclass with 20 parameters, all overridable via `CS_` environment variables
-- **Four-framework support**: a3s-code (stdio / HTTP) + Claude Code (hooks / harness) + Codex CLI (HTTP) + OpenClaw (WebSocket / Webhook)
+- **Four-framework support**: a3s-code (explicit stdio / HTTP transport) + Claude Code (hooks / harness) + Codex CLI (session log monitoring) + OpenClaw (WebSocket / Webhook)
 - **Real-time monitoring**: SSE streaming, `clawsentry watch` CLI, React/TypeScript web dashboard
 - **Production security**: Bearer token auth, HMAC webhook signatures, UDS chmod 0o600, SSL/TLS, rate limiting
 - **Session enforcement**: auto-escalate after N high-risk events with configurable cooldown
-- **2201+ tests**, ~33s full suite
+- **2234+ tests**, ~33s full suite
 
 ## Installation
 
@@ -46,7 +46,7 @@ clawsentry start --framework a3s-code --interactive  # enable DEFER interaction
 ```
 
 The `start` command will:
-1. Auto-detect your framework (OpenClaw or a3s-code)
+1. Auto-detect your framework (a3s-code, Claude Code, Codex, or OpenClaw)
 2. Initialize configuration if needed
 3. Start the gateway in the background
 4. Display live monitoring in the foreground
@@ -59,10 +59,15 @@ Press Ctrl+C to gracefully shutdown.
 #### a3s-code
 
 ```bash
-clawsentry init a3s-code           # generate .env.clawsentry + .a3s-code/settings.json
+clawsentry init a3s-code           # generate .env.clawsentry
 clawsentry gateway                 # start gateway (default :8080)
 clawsentry watch                   # tail live decisions in your terminal
 ```
+
+Wire a3s-code through explicit SDK transport in your agent script, for example
+`SessionOptions().ahp_transport = StdioTransport(program="clawsentry-harness", args=[])`.
+Do not rely on `.a3s-code/settings.json` for AHP; the current upstream runtime
+does not auto-load it.
 
 #### OpenClaw
 

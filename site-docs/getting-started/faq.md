@@ -210,7 +210,7 @@ ClawSentry 提供了多项生产级安全特性：
 |------|------|---------|
 | **SSL/TLS** | HTTPS 加密传输 | `AHP_SSL_CERTFILE` / `AHP_SSL_KEYFILE` |
 | **Bearer Token 认证** | 所有 API 请求必须携带令牌 | `CS_AUTH_TOKEN` |
-| **速率限制** | 防止 API 滥用 | `AHP_RATE_LIMIT_PER_MINUTE`（默认 300） |
+| **速率限制** | 防止 API 滥用 | `CS_RATE_LIMIT_PER_MINUTE`（默认 300） |
 | **IP 白名单** | Webhook 来源 IP 限制 | `AHP_WEBHOOK_IP_WHITELIST` |
 | **Token TTL** | 令牌有效期控制 | `AHP_WEBHOOK_TOKEN_TTL_SECONDS` |
 | **UDS 权限隔离** | Socket 文件 chmod 600 | 自动设置 |
@@ -250,7 +250,7 @@ ClawSentry 在三个层级都提供了自定义能力：
 
     ```bash
     # 速率限制（每分钟最大请求数）
-    AHP_RATE_LIMIT_PER_MINUTE=500
+    CS_RATE_LIMIT_PER_MINUTE=500
 
     # 会话强制策略阈值
     AHP_SESSION_ENFORCEMENT_THRESHOLD=5

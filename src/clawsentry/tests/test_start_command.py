@@ -41,6 +41,7 @@ class TestDetectFramework:
         result = detect_framework(
             openclaw_home=tmp_path / "nope",
             a3s_dir=a3s_dir,
+            codex_home=tmp_path / "nope4",
             claude_home=tmp_path / "nope3",
         )
         assert result is None
@@ -58,9 +59,21 @@ class TestDetectFramework:
         result = detect_framework(
             openclaw_home=tmp_path / "nope",
             a3s_dir=tmp_path / "nope2",
+            codex_home=tmp_path / "nope4",
             claude_home=tmp_path / "nope3",
         )
         assert result is None
+
+    def test_detects_codex_from_sessions_dir(self, tmp_path):
+        codex_home = tmp_path / ".codex"
+        (codex_home / "sessions").mkdir(parents=True)
+        result = detect_framework(
+            openclaw_home=tmp_path / "nope",
+            a3s_dir=tmp_path / "nope2",
+            claude_home=tmp_path / "nope3",
+            codex_home=codex_home,
+        )
+        assert result == "codex"
 
 
 class TestEnsureInit:
@@ -234,6 +247,7 @@ class TestRunStart:
             assert "ClawSentry starting" in captured.out
             assert "127.0.0.1:8080" in captured.out
             assert "test-token-123" in captured.out
+            assert "(auto-detected)" not in captured.out
 
     def test_run_start_no_watch_mode(self, tmp_path, capsys):
         env_file = tmp_path / ".env.clawsentry"
@@ -257,6 +271,9 @@ class TestRunStart:
             )
 
             mock_watch.assert_not_called()
+            out = capsys.readouterr().out
+            assert "clawsentry stop" in out
+            assert "Ctrl+C" not in out
 
     def test_run_start_exits_on_health_fail(self, tmp_path, capsys):
         env_file = tmp_path / ".env.clawsentry"
@@ -349,7 +366,7 @@ class TestDetectFrameworkFix:
         (claude_home / "settings.json").write_text("{}")
         nope = tmp_path / "nope"
         result = detect_framework(
-            openclaw_home=nope, a3s_dir=nope, claude_home=claude_home,
+            openclaw_home=nope, a3s_dir=nope, codex_home=nope, claude_home=claude_home,
         )
         assert result is None
 
@@ -562,3 +579,36 @@ class TestRunStartPidAndBrowser:
             )
 
             mock_browser.assert_not_called()
+
+    def test_run_start_marks_auto_detected_when_requested(self, tmp_path, capsys, monkeypatch):
+        from clawsentry.cli import start_command
+
+        pid_file = tmp_path / "gateway.pid"
+        monkeypatch.setattr(start_command, "_PID_FILE", pid_file)
+
+        env_file = tmp_path / ".env.clawsentry"
+        env_file.write_text("CS_AUTH_TOKEN=abc\n")
+
+        with (
+            patch("clawsentry.cli.start_command.launch_gateway") as mock_launch,
+            patch(
+                "clawsentry.cli.start_command.wait_for_health", return_value=True
+            ),
+            patch("clawsentry.cli.start_command.run_watch_loop") as mock_watch,
+            patch("clawsentry.cli.start_command.shutdown_gateway"),
+        ):
+            mock_launch.return_value = MagicMock(pid=54321)
+            mock_watch.side_effect = KeyboardInterrupt
+
+            run_start(
+                framework="codex",
+                host="127.0.0.1",
+                port=8080,
+                target_dir=tmp_path,
+                no_watch=False,
+                interactive=False,
+                auto_detected=True,
+            )
+
+        out = capsys.readouterr().out
+        assert "Framework:  codex (auto-detected)" in out

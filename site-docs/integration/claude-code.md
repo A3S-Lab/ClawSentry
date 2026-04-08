@@ -261,7 +261,7 @@ Harness 会在每次 Hook 调用时检查项目目录下的配置文件（60 秒
 | `CS_HTTP_HOST` | `127.0.0.1` | HTTP 监听地址 |
 | `CS_HTTP_PORT` | `8080` | HTTP 监听端口 |
 | `CS_TRAJECTORY_DB_PATH` | `/tmp/clawsentry-trajectory.db` | SQLite 轨迹数据库路径 |
-| `AHP_RATE_LIMIT_PER_MINUTE` | `300` | 每分钟请求速率限制 |
+| `CS_RATE_LIMIT_PER_MINUTE` | `300` | 每分钟请求速率限制 |
 
 !!! tip "更多配置"
     完整的环境变量列表请参阅 [环境变量参考](../configuration/env-vars.md)，检测管线调优请参阅 [检测管线配置](../configuration/detection-config.md)。
@@ -380,7 +380,7 @@ rm .env.clawsentry  # 手动删除
 curl http://127.0.0.1:8080/health
 ```
 
-预期响应：`{"status": "ok"}`
+预期响应包含：`{"status": "healthy", ...}`
 
 ### 步骤 2: 确认 hooks 已注入
 

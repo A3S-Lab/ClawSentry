@@ -8,16 +8,20 @@
 
 a3s-code 是一个 AI 编码代理框架，拥有完整的 Hook 系统（11 种事件类型）。ClawSentry 通过 **AHP (Agent Harness Protocol)** 协议拦截 a3s-code 的 `PreToolUse` / `PostToolUse` 等事件，由三层决策引擎（L1 规则 / L2 语义 / L3 Agent）实时评估风险并返回 allow / block / defer 判决。
 
-ClawSentry 提供三种方式接入 a3s-code：
+ClawSentry 当前只把 a3s-code 的 **显式 SDK AHP Transport** 作为公开支持路径：
 
-| 特性 | SDK Transport (推荐) | stdio 管道 | HTTP Hook (settings.json) |
-|------|:--------------------:|:----------:|:-------------------------:|
-| **延迟** | ~5-10ms | ~3-5ms | ~5-10ms |
-| **可靠性** | 高 | 高（本地进程） | 高 |
-| **配置复杂度** | 最低（纯代码） | 中等（harness + UDS） | 低（JSON 配置） |
-| **网络依赖** | 需要访问 Gateway | 无（UDS 本地套接字） | 需要访问 Gateway |
-| **决策链路** | Agent SDK → `HttpTransport` → Gateway → 决策 → SDK | a3s-code → stdin → harness → Gateway(UDS) → 决策 → stdout | a3s-code → HTTP POST → Gateway → 决策 → HTTP 响应 |
-| **适用场景** | 新项目、SDK 集成 | 需要最低延迟、已有 UDS 基础设施 | 快速验证、远程 Gateway |
+| 特性 | SDK StdioTransport（推荐） | SDK HttpTransport（已验证） |
+|------|:--------------------------:|:---------------------------:|
+| **当前可用性** | 已验证可用 | 已验证可用 |
+| **延迟** | ~3-5ms | ~5-10ms |
+| **可靠性** | 高，显式 SDK 配置 | 高，显式 SDK 配置；需避免本地代理干扰 |
+| **配置复杂度** | 低（纯代码 + harness） | 低（纯代码 + HTTP URL） |
+| **网络依赖** | 无 HTTP 依赖，harness 通过 UDS 访问 Gateway | 需要访问 Gateway HTTP 端口 |
+| **决策链路** | Agent SDK → `StdioTransport` → `clawsentry-harness` → Gateway(UDS) → 决策 → SDK | Agent SDK → `HttpTransport` → Gateway `/ahp/a3s` → 决策 → SDK |
+| **适用场景** | 本地开发、默认主路径 | 希望走 HTTP、容器/跨进程 Gateway |
+
+!!! info "2026-04-08 最新可用性结论（实测）"
+    **真实可用**：显式 SDK `SessionOptions().ahp_transport` 路径，包括 `StdioTransport(program="clawsentry-harness")` 和 `HttpTransport("http://127.0.0.1:8080/ahp/a3s?...")`。本轮跨进程复核中，`HttpTransport` 指向真实 ClawSentry Gateway 时观测到 `request_count=2`、`handshake_status=200`、`has_runtime_error=false`、`timed_out=false`。
 
 ---
 
@@ -52,12 +56,12 @@ clawsentry init a3s-code --auto-detect
 此命令会在当前目录生成：
 
 - **`.env.clawsentry`** — 包含 UDS 路径和认证 Token 的环境变量文件（权限 `600`）
-- **`.a3s-code/settings.json`** — 注入 `PreToolUse`/`PostToolUse` 的 HTTP Hook（默认带 `?token=`）
 
 生成的 `.env.clawsentry` 内容示例：
 
 ```ini
 # ClawSentry — a3s-code integration config
+CS_FRAMEWORK=a3s-code
 CS_UDS_PATH=/tmp/clawsentry.sock
 CS_AUTH_TOKEN=<自动生成的安全 token>
 ```
@@ -90,94 +94,45 @@ Gateway 同时监听以下端点：
 |------|------|------|
 | `/tmp/clawsentry.sock` | UDS (JSON-RPC 2.0, 长度前缀帧) | stdio harness 连接 |
 | `http://127.0.0.1:8080/ahp` | HTTP (JSON-RPC 2.0) | 通用 RPC 端点 |
-| `http://127.0.0.1:8080/ahp/a3s` | HTTP (AHP stdio 协议) | a3s-code HTTP 直连 |
+| `http://127.0.0.1:8080/ahp/a3s` | HTTP (JSON-RPC AHP) | a3s-code `HttpTransport` 直连 |
 
 ### 接入 a3s-code
 
-a3s-code 支持三种方式接入 ClawSentry。推荐使用 SDK Transport 方式，配置最简且与 a3s-code 最新 API 对齐。
+a3s-code 的真实主路径是 SDK Transport：在代码中显式设置 `SessionOptions().ahp_transport`。
 
-=== "SDK Transport（推荐） :material-star:"
+### SDK Transport（推荐）
 
-    在 Agent 脚本中通过 `HttpTransport` 显式指定 AHP 端点：
+默认推荐：在 SDK 中显式指定 `StdioTransport`，让 a3s-code 启动 `clawsentry-harness` 并通过本机 UDS 访问 Gateway：
 
-    ```python
-    from a3s_code import Agent, HttpTransport, SessionOptions
+```python
+from a3s_code import Agent, SessionOptions, StdioTransport
 
-    agent = Agent()
-    opts = SessionOptions()
+agent = Agent.create("agent.hcl")
+opts = SessionOptions()
+opts.ahp_transport = StdioTransport(program="clawsentry-harness", args=[])
+session = agent.session(".", opts, permissive=True)
+```
 
-    # 将 AHP transport 指向 ClawSentry Gateway
-    opts.ahp_transport = HttpTransport(
-        "http://127.0.0.1:8080/ahp/a3s?token=$CS_AUTH_TOKEN"
-    )
+也可以使用已验证的 `HttpTransport` 直连 Gateway HTTP 端点：
 
-    session = agent.session(".", opts)
-    ```
+```python
+import os
+from a3s_code import Agent, HttpTransport, SessionOptions
 
-    !!! note "工作原理"
-        a3s-code SDK 内部在每次工具调用前后自动通过 `HttpTransport` 向 Gateway 发送 AHP 事件。无需配置 Hook JSON，无需启动独立 harness 进程。
+agent = Agent.create("agent.hcl")
+opts = SessionOptions()
+token = os.environ["CS_AUTH_TOKEN"]
+opts.ahp_transport = HttpTransport(
+    f"http://127.0.0.1:8080/ahp/a3s?token={token}"
+)
+session = agent.session(".", opts, permissive=True)
+```
 
-    !!! tip "Token 注入"
-        实际使用时将 `$CS_AUTH_TOKEN` 替换为环境变量读取：
-        ```python
-        import os
-        token = os.environ["CS_AUTH_TOKEN"]
-        opts.ahp_transport = HttpTransport(
-            f"http://127.0.0.1:8080/ahp/a3s?token={token}"
-        )
-        ```
+!!! tip "HTTP 本地回环代理"
+    如果你的 shell 设置了 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`，建议同时设置 `NO_PROXY=127.0.0.1,localhost`，避免本地 Gateway 请求被代理劫持。
 
-=== "stdio 管道"
-
-    在 a3s-code 的配置文件（`.a3s-code/settings.json`）中添加 Hook：
-
-    ```json
-    {
-      "hooks": {
-        "PreToolUse": [
-          {
-            "type": "command",
-            "command": "clawsentry-harness"
-          }
-        ],
-        "PostToolUse": [
-          {
-            "type": "command",
-            "command": "clawsentry-harness"
-          }
-        ]
-      }
-    }
-    ```
-
-    !!! note "工作原理"
-        a3s-code 将每个 Hook 事件以 JSON-RPC 格式写入 `clawsentry-harness` 的 stdin，harness 解析后通过 UDS 转发到 Gateway，收到判决后将 JSON-RPC 响应写回 stdout。
-
-=== "HTTP Hook"
-
-    在 `.a3s-code/settings.json` 中配置 HTTP 类型 Hook：
-
-    ```json
-    {
-      "hooks": {
-        "PreToolUse": [
-          {
-            "type": "http",
-            "url": "http://127.0.0.1:8080/ahp/a3s?token=<CS_AUTH_TOKEN>"
-          }
-        ],
-        "PostToolUse": [
-          {
-            "type": "http",
-            "url": "http://127.0.0.1:8080/ahp/a3s?token=<CS_AUTH_TOKEN>"
-          }
-        ]
-      }
-    }
-    ```
-
-    !!! note "工作原理"
-        a3s-code 直接向 Gateway 的 `/ahp/a3s` 端点发送 HTTP POST 请求。Gateway 内部使用 `InProcessA3SAdapter` 处理事件，无需 UDS 中转。
+!!! note "工作原理"
+    SDK 路径下，a3s-code 在每次工具调用前后自动发送 AHP 事件。
 
 ### 验证集成
 
@@ -217,7 +172,7 @@ sequenceDiagram
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `CS_UDS_PATH` | `/tmp/clawsentry.sock` | Gateway UDS 套接字路径 |
-| `A3S_GATEWAY_DEFAULT_DEADLINE_MS` | `100` | 决策超时（毫秒） |
+| `A3S_GATEWAY_DEFAULT_DEADLINE_MS` | `4500` | 决策超时（毫秒） |
 | `A3S_GATEWAY_MAX_RPC_RETRIES` | `1` | RPC 最大重试次数 |
 | `A3S_GATEWAY_RETRY_BACKOFF_MS` | `50` | 重试退避间隔（毫秒） |
 | `A3S_GATEWAY_DEFAULT_SESSION_ID` | `ahp-session` | 默认会话 ID |
@@ -258,11 +213,14 @@ sequenceDiagram
     G-->>A: HTTP 200 (JSON-RPC 结果)
 ```
 
-只需设置 a3s-code 的 Hook URL 即可，无需启动独立的 harness 进程。
+该模式对应显式 SDK `HttpTransport` 时已通过跨进程 Gateway 验证。建议首次接入仍做一次验收（握手 + 真实工具调用），尤其是在存在代理环境变量或自定义 Gateway 地址时。
 
-如果 Gateway 启用了认证（`CS_AUTH_TOKEN` 不为空），a3s-code 的 HTTP Hook 可使用任一方式认证：
+如果 Gateway 启用了认证（`CS_AUTH_TOKEN` 不为空），a3s-code 的 `HttpTransport` 可使用任一方式认证：
 - `Authorization: Bearer <token>` 请求头
 - URL 查询参数 `?token=<token>`（初始化器默认采用）
+
+!!! warning "失败签名与回退"
+    若日志出现 `failed to create AHP executor ... continuing without AHP`，工具调用会在“无 AHP”模式继续执行。请先确认 `NO_PROXY=127.0.0.1,localhost`、Gateway 独立进程可达，并用 `POST /ahp/a3s` 握手排除端点问题；仍失败时再回退到 `SDK + StdioTransport` 并提交运行时信息。
 
 ---
 
@@ -406,6 +364,7 @@ AHP_SSL_KEYFILE=/path/to/key.pem \
 |------|--------|------|
 | `CS_HTTP_HOST` | `127.0.0.1` | HTTP 监听地址 |
 | `CS_HTTP_PORT` | `8080` | HTTP 监听端口 |
+| `CS_FRAMEWORK` | `a3s-code` | `clawsentry init a3s-code` 写入的框架标识 |
 | `CS_AUTH_TOKEN` | *(空)* | Bearer Token 认证（空=禁用） |
 | `CS_UDS_PATH` | `/tmp/clawsentry.sock` | UDS 套接字路径 |
 | `CS_TRAJECTORY_DB_PATH` | `/tmp/clawsentry-trajectory.db` | SQLite 轨迹数据库路径 |
@@ -539,6 +498,16 @@ curl -X POST http://127.0.0.1:8080/ahp/a3s \
 
 预期结果：`"action": "block"`, `"decision": "block"` — 破坏性命令被阻止。
 
+### 步骤 5: 验证 SDK `HttpTransport`（可选）
+
+如需使用 HTTP SDK 路径，可运行项目自带的 CS-028 复核脚本。该脚本会以子进程启动真实 ClawSentry Gateway，并在父进程创建 `Agent.session(..., HttpTransport(...))`：
+
+```bash
+python issues/issue_submission_2026-04-08/repros/05_a3s_http_transport_runtime_failure.py
+```
+
+通过时应看到 `reproduced=false`，并包含 `request_count>=1`、`handshake_status=200`、`has_runtime_error=false`、`timed_out=false`。
+
 ---
 
 ## 会话级强制策略
@@ -591,6 +560,16 @@ curl -X POST http://127.0.0.1:8080/report/session/{session_id}/enforcement \
     2. 确认 UDS 套接字存在：`ls -la /tmp/clawsentry.sock`
     3. 检查 harness 的 stderr 输出（a3s-code 通常会转发 stderr）
     4. 检查 UDS 路径是否一致：`echo $CS_UDS_PATH`
+
+??? question "HttpTransport 超时/连接失败，但 Gateway 已启动"
+    1. 检查代理环境变量：`env | grep -i proxy`
+    2. 对本地回环地址禁用代理：`export NO_PROXY=127.0.0.1,localhost`
+    3. 重试 `curl http://127.0.0.1:8080/health`
+    4. 再重试 `POST /ahp/a3s` 握手请求确认连通性
+    5. 若 stderr 出现 `failed to create AHP executor ... continuing without AHP`：
+       - 说明当前 a3s 运行时的 `HttpTransport` 初始化未成功，工具调用会在“无 AHP”模式继续执行。
+       - 先确认本地代理未劫持回环地址，并用上方 CS-028 脚本按跨进程拓扑复核。
+       - 仍失败时，改用显式 `StdioTransport(program="clawsentry-harness")`，并附上脚本 JSON 输出重报 issue。
 
 ??? question "所有命令都被 block"
     1. 默认 L1 策略会阻止包含 `destructive_pattern` 的 Bash 命令

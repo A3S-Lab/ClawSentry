@@ -83,6 +83,7 @@ class TestCodexDetectFramework:
         result = detect_framework(
             openclaw_home=tmp_path / "fake_oc",
             a3s_dir=tmp_path / "fake_a3s",
+            codex_home=tmp_path / "fake_codex",
             claude_home=tmp_path / "fake_claude",
         )
         assert result is None
@@ -125,6 +126,15 @@ class TestCodexInitializerSessionDir:
         from clawsentry.cli.initializers.codex import CodexInitializer
         result = CodexInitializer().generate_config(tmp_path)
         assert "CS_CODEX_SESSION_DIR" not in result.env_vars
+
+    def test_enables_session_auto_detect(self, tmp_path, monkeypatch):
+        """init codex should opt in to Codex watcher auto-detection."""
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path / "nonexistent"))
+
+        from clawsentry.cli.initializers.codex import CodexInitializer
+        result = CodexInitializer().generate_config(tmp_path)
+        assert result.env_vars["CS_CODEX_WATCH_ENABLED"] == "true"
+        assert "CS_CODEX_WATCH_ENABLED=true" in (tmp_path / ".env.clawsentry").read_text()
 
     def test_next_steps_no_curl(self, tmp_path, monkeypatch):
         """next_steps should not mention curl or POST /ahp/codex."""

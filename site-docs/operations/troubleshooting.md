@@ -418,7 +418,7 @@ description: ClawSentry 常见问题诊断与解决方案
 
     1. **OpenClaw 未连接**：检查 `OPENCLAW_WS_URL` 和 `OPENCLAW_OPERATOR_TOKEN` 配置
     2. **OpenClaw 已断开**：检查 OpenClaw Gateway 是否仍在运行
-    3. **仅使用 a3s-code**：a3s-code 的审批机制通过 stdio 传输，不需要 OpenClaw 连接。此提示可以忽略
+    3. **仅使用 a3s-code**：a3s-code 的审批机制通过显式 SDK Transport（stdio 或 HTTP）接入 ClawSentry，不需要 OpenClaw 连接。此提示可以忽略
 
     !!! info "DEFER 仍然可以查看"
         即使无法 resolve，运维人员仍可以在 DEFER Panel 中查看决策详情，了解 Agent 的操作请求。
@@ -528,7 +528,7 @@ description: ClawSentry 常见问题诊断与解决方案
        ```bash
        clawsentry init codex
        ```
-       自动检测 Codex 安装路径并配置 `CS_CODEX_SESSION_DIR`。
+       自动检测 Codex 安装路径；如果 session 目录尚不存在，会写入 `CS_CODEX_WATCH_ENABLED=true`，让 Gateway 后续从 `$CODEX_HOME/sessions` 自动探测。
 
     2. **手动指定 session 目录**：
        ```bash
@@ -536,7 +536,7 @@ description: ClawSentry 常见问题诊断与解决方案
        clawsentry start
        ```
 
-    3. **Watcher 被禁用**：确认 `CS_CODEX_WATCH_ENABLED` 未设置为 `false`
+    3. **Watcher 未启用自动探测**：如果没有显式设置 `CS_CODEX_SESSION_DIR`，确认 `CS_CODEX_WATCH_ENABLED=true`
 
 ??? question "Codex Session Watcher 日志显示 'session dir does not exist'"
 
@@ -717,14 +717,14 @@ description: ClawSentry 常见问题诊断与解决方案
     **诊断**：
     ```bash
     # 查看当前速率限制配置
-    echo $AHP_RATE_LIMIT_PER_MINUTE
+    echo $CS_RATE_LIMIT_PER_MINUTE
     ```
 
     **解决方案**：
 
     1. **提高限制**（如果硬件允许）：
        ```bash
-       export AHP_RATE_LIMIT_PER_MINUTE=1000
+       export CS_RATE_LIMIT_PER_MINUTE=1000
        ```
 
     2. **检查是否有异常流量**：大量事件可能表示 Agent 行为异常或配置错误

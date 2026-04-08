@@ -78,6 +78,18 @@ def _camel_to_snake(name: str) -> str:
     return s.lower()
 
 
+def _normalize_event_type(value: Any) -> str:
+    """Normalize A3S/Hook event names across CamelCase and snake_case forms."""
+    if not isinstance(value, str):
+        return ""
+    event_type = value.strip()
+    if not event_type:
+        return ""
+    if event_type.islower():
+        return event_type
+    return _camel_to_snake(event_type)
+
+
 def _log_stderr(msg: str) -> None:
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] [a3s-gateway-harness] {msg}", file=sys.stderr, flush=True)
@@ -194,7 +206,7 @@ class A3SGatewayHarness:
         }
 
     async def _handle_event(self, params: dict[str, Any]) -> dict[str, Any]:
-        event_type_raw = str(params.get("event_type", "")).strip().lower()
+        event_type_raw = _normalize_event_type(params.get("event_type"))
         payload = _resolve_payload(params.get("payload"))
 
         # Check project config from payload cwd (covers JSON-RPC path)
@@ -299,10 +311,7 @@ class A3SGatewayHarness:
             or msg.get("hook_event_name")
             or msg.get("hook_type", "")
         )
-        # Normalize CamelCase: PreToolUse -> pre_tool_use
-        if event_type and not event_type.islower():
-            event_type = _camel_to_snake(event_type)
-        params["event_type"] = event_type
+        params["event_type"] = _normalize_event_type(event_type)
 
         # payload: Claude Code sends tool_name/tool_input at top level, not nested
         payload = msg.get("payload")

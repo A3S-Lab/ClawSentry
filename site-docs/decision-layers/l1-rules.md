@@ -663,7 +663,7 @@ L1 引擎本身**零配置即可运行**。以下环境变量影响与 L1 相关
 | `AHP_SESSION_ENFORCEMENT_ENABLED` | 启用会话级强制策略（在 L1 评估后检查） | `false` |
 | `AHP_SESSION_ENFORCEMENT_THRESHOLD` | 会话内高危事件触发强制策略的阈值 | `3` |
 | `AHP_SESSION_ENFORCEMENT_ACTION` | 强制策略动作 (`defer`/`block`/`l3_require`) | `defer` |
-| `AHP_RATE_LIMIT_PER_MINUTE` | Gateway 速率限制（超限返回 ENGINE_UNAVAILABLE） | `300` |
+| `CS_RATE_LIMIT_PER_MINUTE` | Gateway 速率限制（超限返回 ENGINE_UNAVAILABLE） | `300` |
 
 ### D4 频率异常检测
 

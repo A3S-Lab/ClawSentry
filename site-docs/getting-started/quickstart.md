@@ -17,7 +17,7 @@ description: 5 分钟内启动 ClawSentry 并对接 AI Agent 框架
 | clawsentry watch 监控 | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
 | Web UI 仪表板 | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
 | DEFER 交互审批 | :white_check_mark: | :white_check_mark: | :white_check_mark: | :x: |
-| 集成方式 | Hook 注入 | Hook 配置 | WebSocket | Session 日志监控 |
+| 集成方式 | Hook 注入 | 显式 AHP Transport | WebSocket | Session 日志监控 |
 
 !!! info "为什么 Codex 不能自动拦截？"
     Codex CLI 目前没有提供原生 hook 机制。ClawSentry 通过监控其 session 日志文件实现实时评估和推荐，建议配合 `--approval-policy untrusted` 使用。
@@ -47,11 +47,13 @@ description: 5 分钟内启动 ClawSentry 并对接 AI Agent 框架
 
     ??? example "终端输出示例"
         ```
-        [clawsentry] Detected framework: claude-code
-        [clawsentry] Starting gateway...
-        INFO: ClawSentry Gateway started on 127.0.0.1:8080
+        ClawSentry starting...
+          Framework:  claude-code
+          Gateway:    http://127.0.0.1:8080 (background)
+          Web UI:     http://127.0.0.1:8080/ui?token=xK7m9p2Q...
+          Log file:   /tmp/clawsentry-gateway.log
 
-        Web UI: http://127.0.0.1:8080/ui?token=xK7m9p2Q...
+        Gateway ready. Streaming events...
 
         ──────────────────────────────────────
         [14:23:05] DECISION  session=my-session
@@ -114,12 +116,12 @@ description: 5 分钟内启动 ClawSentry 并对接 AI Agent 框架
 
 === "a3s-code"
 
-    a3s-code 通过 stdio harness 或 HTTP Transport 接入，**自动拦截**高危操作。
+    a3s-code 通过显式 AHP Transport（HTTP / stdio）接入，**自动拦截**高危操作。
 
     **前置条件**
 
     ```bash
-    pip install clawsentry
+    pip install clawsentry a3s-code
     ```
 
     ### 一键启动（推荐）
@@ -130,11 +132,13 @@ description: 5 分钟内启动 ClawSentry 并对接 AI Agent 框架
 
     ??? example "终端输出示例"
         ```
-        [clawsentry] Detected framework: a3s-code
-        [clawsentry] Starting gateway...
-        INFO: ClawSentry Supervision Gateway ===
-        INFO: UDS path  : /tmp/clawsentry.sock
-        INFO: HTTP      : 127.0.0.1:8080
+        ClawSentry starting...
+          Framework:  a3s-code
+          Gateway:    http://127.0.0.1:8080 (background)
+          Web UI:     http://127.0.0.1:8080/ui?token=xK7m9p2Q...
+          Log file:   /tmp/clawsentry-gateway.log
+
+        Gateway ready. Streaming events...
         ```
 
     ??? note "分步操作（高级用户）"
@@ -146,17 +150,30 @@ description: 5 分钟内启动 ClawSentry 并对接 AI Agent 框架
         source .env.clawsentry
         ```
 
-        **步骤 2：配置 a3s-code Hook**
+        **步骤 2：在 Agent 代码中显式配置 AHP Transport（推荐）**
 
-        在 a3s-code 配置文件（`agent.hcl` 或 `settings.json`）中：
+        ```python
+        from a3s_code import Agent, SessionOptions, StdioTransport
 
-        ```hcl
-        hooks {
-          ahp {
-            transport = "stdio"
-            program   = "clawsentry-harness"
-          }
-        }
+        agent = Agent.create("agent.hcl")
+        opts = SessionOptions()
+        opts.ahp_transport = StdioTransport(program="clawsentry-harness", args=[])
+        session = agent.session(".", opts, permissive=True)
+        ```
+
+        如需 HTTP 方式，可改用已验证的 `HttpTransport` 直连 Gateway：
+
+        ```python
+        import os
+        from a3s_code import Agent, HttpTransport, SessionOptions
+
+        agent = Agent.create("agent.hcl")
+        opts = SessionOptions()
+        token = os.environ["CS_AUTH_TOKEN"]
+        opts.ahp_transport = HttpTransport(
+            f"http://127.0.0.1:8080/ahp/a3s?token={token}"
+        )
+        session = agent.session(".", opts, permissive=True)
         ```
 
         **步骤 3：启动 Gateway**
@@ -165,10 +182,10 @@ description: 5 分钟内启动 ClawSentry 并对接 AI Agent 框架
         clawsentry gateway
         ```
 
-        **步骤 4：运行 a3s-code**
+        **步骤 4：运行你的 a3s-code Agent 脚本**
 
         ```bash
-        a3s-code agent --session-id my-session
+        python your_agent_script.py
         ```
 
         **步骤 5：实时监控（另一终端，可选）**
@@ -204,10 +221,13 @@ description: 5 分钟内启动 ClawSentry 并对接 AI Agent 框架
 
     ??? example "终端输出示例"
         ```
-        [clawsentry] Detected framework: openclaw
-        [clawsentry] Starting gateway...
-        INFO: OpenClaw  : WS ws://127.0.0.1:18789 (enforcement=ON)
-        INFO: openclaw-ws: Connected to OpenClaw Gateway
+        ClawSentry starting...
+          Framework:  openclaw
+          Gateway:    http://127.0.0.1:8080 (background)
+          Web UI:     http://127.0.0.1:8080/ui?token=xK7m9p2Q...
+          Log file:   /tmp/clawsentry-gateway.log
+
+        Gateway ready. Streaming events...
 
         ──────────────────────────────────────
         [14:30:22] DECISION  session=demo-session

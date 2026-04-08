@@ -6,13 +6,33 @@
 
 ---
 
+## [0.3.6] — 2026-04-08
+
+### 改进
+
+- **CLI 启动提示收敛** — `clawsentry start` 现在只在真正自动检测框架时显示 `(auto-detected)`，显式 `--framework` 不再误导用户。
+- **Codex 启动路径补齐** — `detect_framework()` 支持从 Codex session 目录识别 `codex`，`clawsentry init codex` 写入 `CS_CODEX_WATCH_ENABLED=true`，确保未显式设置 `CS_CODEX_SESSION_DIR` 时 Gateway 仍可按配置自动探测。
+- **后台 Gateway 管理提示** — `clawsentry start --no-watch` 返回后提示使用 `clawsentry stop` 停止后台进程，避免继续提示已不可用的 Ctrl+C 停止方式。
+
+### 文档
+
+- **在线文档审阅修正** — 快速开始、Codex 集成、Claude Code 集成、CLI 参考和首页与当前实现对齐：Codex 标注为 session 日志监控而非自动拦截，a3s-code 标注为显式 SDK Transport，健康检查示例改为 `status=healthy`，速率限制变量统一为 `CS_RATE_LIMIT_PER_MINUTE`。
+- **CLI 参考修正** — 更新 `start` 输出示例、Gateway 日志路径、harness 默认 deadline、fallback 行为和 `.clawsentry.toml` `[project]` 表名。
+
+### 测试
+
+- 新增 CLI/Codex 初始化回归覆盖。
+- 测试套件：2234 passed, 3 skipped (~33s)
+
+---
+
 ## [0.3.5] — 2026-04-08
 
 ### 修复
 
-- **a3s-code token 一致性** — `clawsentry init a3s-code` 在非 `--force` 模式下会优先复用已有 `.a3s-code/settings.json` 中的 `?token=`，避免 `.env.clawsentry` 与 settings token 漂移。
+- **a3s-code 接入边界修正** — `clawsentry init a3s-code` 不再生成或复用 `.a3s-code/settings.json`，仅生成 `.env.clawsentry`，并引导用户使用显式 SDK Transport（`SessionOptions().ahp_transport`）。
 - **a3s/source_framework 兼容性** — 扩展 `source_framework` 适配器别名（含 `.v1` 变体），并为 `/ahp/a3s` 增加 10MB 请求体大小保护（超限返回 413）。
-- **框架自动检测收敛** — `detect_framework` 优先使用显式 `CS_FRAMEWORK`；a3s 自动检测要求 `.a3s-code/settings.json` 存在，降低误判。
+- **框架自动检测收敛** — `detect_framework` 优先使用显式 `CS_FRAMEWORK`；`.a3s-code/settings.json` 仅作为旧版项目兼容标记，不再作为受支持的 AHP 配置入口。
 
 ### 文档与发布流程
 
@@ -21,7 +41,7 @@
 
 ### 测试
 
-- 新增/增强 a3s 相关回归测试（init token 复用、source_framework 别名、`/ahp/a3s` 认证与 payload 限制）
+- 新增/增强 a3s 相关回归测试（init 不创建 settings、source_framework 别名、`/ahp/a3s` 认证与 payload 限制）
 - 测试套件：2224 passed, 2 skipped (~34s)
 
 ---
@@ -612,6 +632,7 @@
 - 775 个测试用例，覆盖单元测试 + 集成测试 + E2E 测试
 - 测试通过时间 ~6.5s
 
+[0.3.6]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.6
 [0.3.5]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.5
 [0.3.4]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.4
 [0.3.3]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.3

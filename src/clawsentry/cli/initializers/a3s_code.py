@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import secrets
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
 
 from .base import ENV_FILE_NAME, InitResult
 
@@ -15,40 +13,11 @@ class A3SCodeInitializer:
 
     framework_name: str = "a3s-code"
 
-    @staticmethod
-    def _extract_token_from_settings(settings_path: Path) -> str | None:
-        """Extract `?token=` from existing a3s HTTP hook settings, if present."""
-        try:
-            settings = json.loads(settings_path.read_text())
-        except (OSError, json.JSONDecodeError, TypeError):
-            return None
-
-        hooks = settings.get("hooks")
-        if not isinstance(hooks, dict):
-            return None
-
-        for hook_name in ("PreToolUse", "PostToolUse"):
-            entries = hooks.get(hook_name)
-            if not isinstance(entries, list):
-                continue
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
-                raw_url = entry.get("url")
-                if not isinstance(raw_url, str) or not raw_url.strip():
-                    continue
-                token = parse_qs(urlparse(raw_url).query).get("token", [""])[0]
-                if token:
-                    return token
-
-        return None
-
     def generate_config(
         self, target_dir: Path, *, force: bool = False, **_kwargs: object
     ) -> InitResult:
         env_path = target_dir / ENV_FILE_NAME
-        settings_dir = target_dir / ".a3s-code"
-        settings_path = settings_dir / "settings.json"
+        legacy_settings_path = target_dir / ".a3s-code" / "settings.json"
         warnings: list[str] = []
         files_created: list[Path] = []
 
@@ -59,17 +28,17 @@ class A3SCodeInitializer:
         if env_path.exists() and force:
             warnings.append(f"Overwriting existing {env_path}")
 
-        token = secrets.token_urlsafe(32)
-        if settings_path.exists() and not force:
-            existing_token = self._extract_token_from_settings(settings_path)
-            if existing_token:
-                token = existing_token
-                warnings.append(
-                    f"Reusing token from {settings_path} to keep settings and env consistent"
-                )
+        if legacy_settings_path.exists():
+            warnings.append(
+                f"Ignoring legacy {legacy_settings_path}; current upstream "
+                "a3s-code does not auto-load it for AHP. Configure "
+                "SessionOptions.ahp_transport explicitly."
+            )
+
         env_vars = {
+            "CS_FRAMEWORK": self.framework_name,
             "CS_UDS_PATH": "/tmp/clawsentry.sock",
-            "CS_AUTH_TOKEN": token,
+            "CS_AUTH_TOKEN": secrets.token_urlsafe(32),
         }
 
         lines = ["# ClawSentry — a3s-code integration config"]
@@ -80,29 +49,12 @@ class A3SCodeInitializer:
         env_path.chmod(0o600)  # tokens are sensitive
         files_created.append(env_path)
 
-        # Generate .a3s-code/settings.json with HTTP hooks (token embedded in URL)
-        # ?token= is supported by all Gateway endpoints via _make_auth_dependency
-        if not settings_path.exists() or force:
-            settings_dir.mkdir(parents=True, exist_ok=True)
-            gateway_url = f"http://127.0.0.1:8080/ahp/a3s?token={token}"
-            settings = {
-                "hooks": {
-                    "PreToolUse": [{"type": "http", "url": gateway_url}],
-                    "PostToolUse": [{"type": "http", "url": gateway_url}],
-                }
-            }
-            settings_path.write_text(json.dumps(settings, indent=2) + "\n")
-            files_created.append(settings_path)
-        else:
-            warnings.append(
-                f"{settings_path} already exists, skipping (use --force to overwrite)"
-            )
-
         next_steps = [
             f"source {ENV_FILE_NAME}",
+            "export NO_PROXY=127.0.0.1,localhost    # avoid routing local Gateway traffic through proxies",
             "clawsentry gateway    # starts on UDS + HTTP port 8080",
             (
-                "# In your agent script, wire the transport explicitly:\n"
+                "# Stable path: wire the transport explicitly in your agent script:\n"
                 "    #   from a3s_code import Agent, HttpTransport, SessionOptions\n"
                 "    #   opts = SessionOptions()\n"
                 f'    #   opts.ahp_transport = HttpTransport("http://127.0.0.1:8080/ahp/a3s?token=$CS_AUTH_TOKEN")\n'

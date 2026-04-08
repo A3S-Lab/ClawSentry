@@ -76,6 +76,8 @@ def detect_framework(
     if (oc / "openclaw.json").is_file():
         return "openclaw"
 
+    # Legacy ClawSentry releases wrote .a3s-code/settings.json. Keep it as a
+    # project marker only; a3s-code AHP still requires explicit SDK transport.
     a3s = a3s_dir or Path.cwd() / ".a3s-code"
     if (a3s / "settings.json").is_file():
         return "a3s-code"
@@ -93,6 +95,12 @@ def detect_framework(
                     return "claude-code"
             except Exception:
                 pass
+
+    effective_codex_home = codex_home or Path(
+        os.environ.get("CODEX_HOME", Path.home() / ".codex")
+    )
+    if (effective_codex_home / "sessions").is_dir():
+        return "codex"
 
     return None
 
@@ -259,6 +267,7 @@ def run_start(
     open_browser: bool = False,
     with_latch: bool = False,
     hub_port: int = 3006,
+    auto_detected: bool = False,
 ) -> None:
     """Orchestrate: auto-init → launch gateway → health check → watch."""
     from .dotenv_loader import load_dotenv
@@ -296,12 +305,13 @@ def run_start(
             no_watch=no_watch,
             interactive=interactive,
             open_browser=open_browser,
+            auto_detected=auto_detected,
         )
         return
 
     # 4. Print banner
     print(f"\nClawSentry starting...")
-    print(f"  Framework:  {framework}{' (auto-detected)' if not did_init else ''}")
+    print(f"  Framework:  {framework}{' (auto-detected)' if auto_detected else ''}")
     print(f"  Gateway:    {gateway_url} (background)")
     print(f"  Web UI:     {ui_url}")
     print(f"  Log file:   {log_path}")
@@ -324,7 +334,7 @@ def run_start(
         webbrowser.open(ui_url)
 
     if no_watch:
-        print(f"Gateway running (PID {proc.pid}). Use Ctrl+C or kill to stop.")
+        print(f"Gateway running (PID {proc.pid}). Use 'clawsentry stop' to stop it.")
         print(f"  clawsentry watch    # to monitor events")
         return
 
@@ -359,6 +369,7 @@ def _run_start_with_latch(
     no_watch: bool,
     interactive: bool,
     open_browser: bool,
+    auto_detected: bool,
 ) -> None:
     """Start gateway + Latch Hub via ProcessManager."""
     from ..latch.binary_manager import BinaryManager
@@ -377,7 +388,7 @@ def _run_start_with_latch(
 
     # Banner
     print(f"\nClawSentry starting (Latch mode)...")
-    print(f"  Framework:  {framework}{' (auto-detected)' if not did_init else ''}")
+    print(f"  Framework:  {framework}{' (auto-detected)' if auto_detected else ''}")
     print(f"  Gateway:    {gateway_url}")
     print(f"  Latch Hub:  {hub_url}")
     print(f"  Web UI:     {ui_url}")

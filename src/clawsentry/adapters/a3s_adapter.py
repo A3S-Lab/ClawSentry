@@ -449,6 +449,10 @@ class InProcessA3SAdapter(A3SCodeAdapter):
                 result = response["result"]
                 if result.get("rpc_status") == "ok":
                     return CanonicalDecision(**result["decision"])
+            elif "error" in response:
+                error_data = response["error"].get("data", {})
+                if "fallback_decision" in error_data and error_data["fallback_decision"]:
+                    return CanonicalDecision(**error_data["fallback_decision"])
         except Exception as e:
             logger.warning("InProcessA3SAdapter gateway call failed: %s", e)
 

@@ -565,15 +565,17 @@ def main(argv: list[str] | None = None) -> None:
         from .start_command import detect_framework, run_start
 
         framework = args.framework
+        auto_detected = False
         if framework is None:
             framework = detect_framework()
             if framework is None:
                 print(
                     "Could not auto-detect framework.\n"
-                    "Use: clawsentry start --framework <openclaw|a3s-code>",
+                    "Use: clawsentry start --framework <a3s-code|claude-code|codex|openclaw>",
                     file=sys.stderr,
                 )
                 sys.exit(1)
+            auto_detected = True
 
         run_start(
             framework=framework,
@@ -584,6 +586,7 @@ def main(argv: list[str] | None = None) -> None:
             open_browser=args.open_browser,
             with_latch=args.with_latch,
             hub_port=args.hub_port,
+            auto_detected=auto_detected,
         )
 
     elif args.command == "stop":

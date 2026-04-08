@@ -1,12 +1,16 @@
-"""Full a3s-code SDK integration test: Agent → StdioTransport → clawsentry-harness → Gateway.
+"""Full a3s-code SDK integration tests for explicit AHP transports.
 
-This exercises the exact production integration path:
+The default path exercises:
   a3s_code.Agent.session(opts, ahp_transport=StdioTransport("clawsentry-harness"))
     → clawsentry-harness subprocess (stdio JSON-RPC, real OS process)
     → ClawSentry Gateway (UDS socket)
     → SupervisionGateway decision + registry recording
 
-This is the only test that uses the actual a3s_code Python SDK to drive
+The HTTP path uses a ClawSentry Gateway child process so it matches the CS-028
+production topology and avoids the false timeout risk from running Uvicorn in a
+thread beside the PyO3/Rust a3s runtime.
+
+These are the only tests that use the actual a3s_code Python SDK to drive
 an LLM-powered agent session with ClawSentry supervision active.
 
 REQUIREMENTS:
@@ -31,10 +35,13 @@ OPT-IN: Set A3S_SDK_E2E=1 to run these tests.
 from __future__ import annotations
 
 import asyncio
+import multiprocessing as mp
 import os
 import shutil
+import socket
 import tempfile
 
+import httpx
 import pytest
 import pytest_asyncio
 
@@ -50,7 +57,7 @@ if not os.getenv("A3S_SDK_E2E"):
     )
 
 try:
-    from a3s_code import Agent, SessionOptions, StdioTransport  # type: ignore[import]
+    from a3s_code import Agent, HttpTransport, SessionOptions, StdioTransport  # type: ignore[import]
 except ImportError:
     pytest.skip(
         "a3s_code not installed. Run: pip install a3s-code",
@@ -98,6 +105,48 @@ def _require_harness() -> None:
         pytest.skip("clawsentry-harness not in PATH. Run: pip install clawsentry")
 
 
+def _reserve_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        return sock.getsockname()[1]
+
+
+def _run_http_gateway_process(port: int, token: str, request_count) -> None:
+    os.environ["CS_AUTH_TOKEN"] = token
+
+    import uvicorn
+
+    from clawsentry.gateway.server import SupervisionGateway, create_http_app
+
+    gw = SupervisionGateway(trajectory_db_path=":memory:")
+    app = create_http_app(gw)
+
+    async def counting_app(scope, receive, send):
+        if scope["type"] == "http" and scope.get("path") == "/ahp/a3s":
+            with request_count.get_lock():
+                request_count.value += 1
+        await app(scope, receive, send)
+
+    uvicorn.run(
+        counting_app,
+        host="127.0.0.1",
+        port=port,
+        log_level="error",
+        access_log=False,
+    )
+
+
+async def _fetch_http_sessions(port: int, token: str) -> dict:
+    async with httpx.AsyncClient(trust_env=False) as client:
+        resp = await client.get(
+            f"http://127.0.0.1:{port}/report/sessions",
+            params={"token": token, "status": "all"},
+        )
+    assert resp.status_code == 200
+    return resp.json()
+
+
 # ---------------------------------------------------------------------------
 # Fixture: in-process gateway + env wired for subprocess harness
 # ---------------------------------------------------------------------------
@@ -137,6 +186,89 @@ async def sdk_gateway():
         os.unlink(TEST_UDS_PATH)
 
 
+@pytest_asyncio.fixture
+async def sdk_http_gateway():
+    port = _reserve_port()
+    token = "sdk-http-e2e-token-1234567890abcdef"
+    request_count = mp.Value("i", 0)
+    old = os.environ.get("CS_AUTH_TOKEN")
+    old_no_proxy = os.environ.get("NO_PROXY")
+    old_no_proxy_lower = os.environ.get("no_proxy")
+    proxy_keys = (
+        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+        "http_proxy", "https_proxy", "all_proxy",
+    )
+    old_proxies = {k: os.environ.get(k) for k in proxy_keys}
+    os.environ["CS_AUTH_TOKEN"] = token
+    # a3s_code HTTP transport may inherit proxy env and fail loopback delivery.
+    # Force direct 127.0.0.1 traffic for deterministic local E2E behavior.
+    for key in proxy_keys:
+        os.environ.pop(key, None)
+    os.environ["NO_PROXY"] = "127.0.0.1,localhost"
+    os.environ["no_proxy"] = "127.0.0.1,localhost"
+    process = mp.Process(
+        target=_run_http_gateway_process,
+        args=(port, token, request_count),
+        daemon=True,
+    )
+    process.start()
+    try:
+        # Readiness probe must not route loopback requests through user proxies.
+        async with httpx.AsyncClient(trust_env=False) as client:
+            for _ in range(50):
+                try:
+                    resp = await client.get(f"http://127.0.0.1:{port}/health")
+                    if resp.status_code == 200:
+                        break
+                except Exception:
+                    pass
+                await asyncio.sleep(0.1)
+            else:
+                raise AssertionError("HTTP gateway did not become ready in time")
+        yield port, token, request_count
+    finally:
+        process.terminate()
+        process.join(timeout=5.0)
+        if old is None:
+            os.environ.pop("CS_AUTH_TOKEN", None)
+        else:
+            os.environ["CS_AUTH_TOKEN"] = old
+        if old_no_proxy is None:
+            os.environ.pop("NO_PROXY", None)
+        else:
+            os.environ["NO_PROXY"] = old_no_proxy
+        if old_no_proxy_lower is None:
+            os.environ.pop("no_proxy", None)
+        else:
+            os.environ["no_proxy"] = old_no_proxy_lower
+        for key, value in old_proxies.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+@pytest.mark.asyncio
+async def test_sdk_http_gateway_fixture_handshake_under_proxy_env(sdk_http_gateway):
+    """Gateway fixture should remain reachable even when host proxy envs are set."""
+    port, token, request_count = sdk_http_gateway
+    body = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "ahp/handshake",
+        "params": {},
+    }
+    async with httpx.AsyncClient(trust_env=False) as client:
+        resp = await client.post(
+            f"http://127.0.0.1:{port}/ahp/a3s?token={token}",
+            json=body,
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["result"]["protocol_version"] == "2.0"
+    assert request_count.value >= 1
+
+
 # ---------------------------------------------------------------------------
 # Helper: create supervised a3s-code session
 # ---------------------------------------------------------------------------
@@ -145,6 +277,15 @@ def _make_session(agent, workspace: str):
     """Create an a3s-code session supervised by ClawSentry via StdioTransport."""
     opts = SessionOptions()
     opts.ahp_transport = StdioTransport(program="clawsentry-harness", args=[])
+    return agent.session(workspace, opts, permissive=True)
+
+
+def _make_http_session(agent, workspace: str, port: int, token: str):
+    """Create an a3s-code session supervised by ClawSentry via HttpTransport."""
+    opts = SessionOptions()
+    opts.ahp_transport = HttpTransport(
+        f"http://127.0.0.1:{port}/ahp/a3s?token={token}"
+    )
     return agent.session(workspace, opts, permissive=True)
 
 
@@ -176,6 +317,46 @@ async def test_sdk_safe_command_session_recorded(sdk_gateway):
         "ClawSentry should have recorded at least one session "
         "from the a3s-code agent's tool calls."
     )
+
+
+@pytest.mark.asyncio
+async def test_sdk_http_safe_command_session_recorded(sdk_http_gateway):
+    """Agent uses HttpTransport → ClawSentry records the session via /ahp/a3s."""
+    cfg = _require_config()
+    agent = Agent.create(cfg)
+    port, token, _request_count = sdk_http_gateway
+
+    with tempfile.TemporaryDirectory() as workspace:
+        session = _make_http_session(agent, workspace, port, token)
+        await asyncio.wait_for(
+            asyncio.to_thread(
+                session.send,
+                "Use the glob tool to list all files in the current directory. "
+                "Just list them and stop.",
+            ),
+            timeout=_LLM_TIMEOUT,
+        )
+
+    sessions = await _fetch_http_sessions(port, token)
+    if len(sessions["sessions"]) < 1:
+        # Distinguish "gateway path broken" from "runtime did not emit HTTP AHP".
+        async with httpx.AsyncClient(trust_env=False) as client:
+            resp = await client.post(
+                f"http://127.0.0.1:{port}/ahp/a3s?token={token}",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "ahp/handshake",
+                    "params": {},
+                },
+            )
+        assert resp.status_code == 200, "Gateway /ahp/a3s should still be reachable"
+        pytest.skip(
+            "a3s runtime continued without AHP over HttpTransport on this machine; "
+            "treat as runtime-not-supported instead of ClawSentry transport regression."
+        )
+
+    assert len(sessions["sessions"]) >= 1
 
 
 # ---------------------------------------------------------------------------

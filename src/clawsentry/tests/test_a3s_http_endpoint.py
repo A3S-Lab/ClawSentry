@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from clawsentry.gateway.models import CanonicalDecision
 from clawsentry.gateway.server import SupervisionGateway, create_http_app
 
 
@@ -107,6 +108,18 @@ class TestA3SHttpEndpoint:
         result = data["result"]
         assert result["action"] in ("continue",)
         assert result["decision"] in ("allow",)
+
+    async def test_jsonrpc_camelcase_event_type_supported(self, client):
+        body = _event_body(command="rm -rf /", tool_name="Bash")
+        body["params"]["event_type"] = "PreToolUse"
+
+        resp = await client.post("/ahp/a3s", json=body)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        result = data["result"]
+        assert result["action"] in ("block", "defer")
+        assert result["metadata"]["risk_level"] in ("high", "critical")
 
     async def test_dangerous_command_blocked(self, client):
         resp = await client.post(
@@ -240,3 +253,45 @@ class TestA3SHttpEndpoint:
         )
         records = gateway.trajectory_store.records
         assert len(records) >= 2
+
+    async def test_inprocess_adapter_uses_gateway_fallback_decision(self, client, gateway, monkeypatch):
+        fallback = CanonicalDecision(
+            decision="allow",
+            reason="gateway fallback says allow",
+            policy_id="gateway-fallback-test",
+            risk_level="low",
+            decision_source="system",
+            final=True,
+        )
+
+        async def fake_handle_jsonrpc(_body):
+            return {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": {
+                    "code": -32001,
+                    "message": "deadline exceeded",
+                    "data": {
+                        "rpc_error_code": "DEADLINE_EXCEEDED",
+                        "retry_eligible": False,
+                        "fallback_decision": fallback.model_dump(mode="json"),
+                    },
+                },
+            }
+
+        monkeypatch.setattr(gateway, "handle_jsonrpc", fake_handle_jsonrpc)
+
+        body = _event_body(
+            tool_name="read_file",
+            command="",
+            session_id="http-fallback-1",
+            req_id=99,
+        )
+        resp = await client.post("/ahp/a3s", json=body)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        result = data["result"]
+        assert result["decision"] == "allow"
+        assert result["action"] == "continue"
+        assert result["reason"] == "gateway fallback says allow"

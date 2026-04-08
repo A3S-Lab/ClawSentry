@@ -128,6 +128,31 @@ async def test_unknown_event_type_returns_allow_result(harness_with_gateway):
 
 
 @pytest.mark.asyncio
+async def test_jsonrpc_camelcase_event_type_is_normalized(harness_with_gateway):
+    resp = await harness_with_gateway.dispatch_async(
+        {
+            "jsonrpc": "2.0",
+            "id": 41,
+            "method": "ahp/event",
+            "params": {
+                "event_type": "PreToolUse",
+                "session_id": "sess-camelcase",
+                "agent_id": "agent-camelcase",
+                "payload": {
+                    "tool": "bash",
+                    "arguments": {"command": "rm -rf /"},
+                },
+            },
+        }
+    )
+
+    assert resp is not None
+    result = resp["result"]
+    assert result["decision"] == "block"
+    assert result["action"] == "block"
+
+
+@pytest.mark.asyncio
 async def test_gateway_down_fallback_blocks_dangerous_pre_action():
     adapter = A3SCodeAdapter(uds_path="/tmp/nonexistent-a3s-harness.sock")
     harness = A3SGatewayHarness(adapter=adapter)

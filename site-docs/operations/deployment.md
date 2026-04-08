@@ -69,7 +69,7 @@ AHP_SSL_CERTFILE=/etc/clawsentry/ssl/cert.pem
 AHP_SSL_KEYFILE=/etc/clawsentry/ssl/key.pem
 
 # ===== 速率限制 =====
-AHP_RATE_LIMIT_PER_MINUTE=300
+CS_RATE_LIMIT_PER_MINUTE=300
 
 # ===== 会话执法策略 =====
 AHP_SESSION_ENFORCEMENT_ENABLED=true
@@ -399,7 +399,7 @@ Gateway 内置速率限制，防止过载：
 
 ```bash
 # 每分钟最大请求数（默认 300）
-AHP_RATE_LIMIT_PER_MINUTE=300
+CS_RATE_LIMIT_PER_MINUTE=300
 ```
 
 超过限制时，API 返回 `RATE_LIMITED` 错误码，RPC 响应包含 `retry_after_ms` 字段。
@@ -441,8 +441,8 @@ OpenAI Codex 没有原生 Hook 接口，ClawSentry 通过轮询 Codex Session JS
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `CS_CODEX_SESSION_DIR` | (自动检测) | Codex sessions 目录路径 |
-| `CS_CODEX_WATCH_ENABLED` | `true` | 是否自动启动 Watcher |
+| `CS_CODEX_SESSION_DIR` | *(空)* | Codex sessions 目录路径；显式设置时直接启用 Watcher |
+| `CS_CODEX_WATCH_ENABLED` | `false`（`init codex` 写入 `true`） | 是否自动探测并启动 Watcher |
 | `CS_CODEX_WATCH_POLL_INTERVAL` | `0.5` | 轮询间隔（秒） |
 
 运行 `clawsentry init codex` 可自动检测 Codex 安装路径并生成配置。
