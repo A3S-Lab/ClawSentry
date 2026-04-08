@@ -375,6 +375,52 @@ description: ClawSentry 常见问题诊断与解决方案
        clawsentry watch
        ```
 
+??? question "已启用自进化模式库，但一直看不到候选模式或确认结果"
+
+    **症状**：已经设置 `CS_EVOLVING_ENABLED=true`，但 `clawsentry watch`、SSE 或 `/ahp/patterns` 看不到 `pattern_candidate` / `pattern_evolved` 事件，列表也始终为空。
+
+    **诊断**：
+    ```bash
+    echo $CS_EVOLVING_ENABLED
+    echo $CS_EVOLVED_PATTERNS_PATH
+
+    curl -H "Authorization: Bearer $CS_AUTH_TOKEN" \
+      http://127.0.0.1:8080/ahp/patterns
+
+    curl -N -H "Authorization: Bearer $CS_AUTH_TOKEN" \
+      "http://127.0.0.1:8080/report/stream?types=pattern_candidate,pattern_evolved"
+    ```
+
+    **解决方案**：
+
+    1. **先看 `/ahp/patterns` 顶层状态字段**：
+       - `enabled=false`：说明 Gateway 当前并未启用自进化模式库。
+       - `store_path=""`：说明没有配置持久化路径。
+       - `count=0` 且 `candidate_count=0`：说明还没有候选模式被成功提取。
+
+    2. **确认功能确实已启用且可持久化**：
+       ```bash
+       export CS_EVOLVING_ENABLED=true
+       export CS_EVOLVED_PATTERNS_PATH=/var/lib/clawsentry/evolved_patterns.yaml
+       ```
+       `CS_EVOLVED_PATTERNS_PATH` 所在目录必须对 Gateway 进程可写；否则候选模式无法落盘。
+
+    3. **确认触发条件满足**：
+       只有在自进化已启用时，且事件被判为 `high` / `critical`，Gateway 才会提取候选模式并广播 `pattern_candidate`。普通 `low` / `medium` 事件不会触发。
+
+    4. **区分“候选已提取”和“模式已确认”**：
+       - `pattern_candidate`：说明刚刚提取出候选模式。
+       - `pattern_evolved`：说明有人通过 `POST /ahp/patterns/confirm` 提交了确认/误报反馈，状态发生了生命周期变化。
+
+    5. **手动确认反馈链路**：
+       ```bash
+       curl -X POST http://127.0.0.1:8080/ahp/patterns/confirm \
+         -H "Authorization: Bearer $CS_AUTH_TOKEN" \
+         -H "Content-Type: application/json" \
+         -d '{"pattern_id":"EV-XXXXXXXX","confirmed":true}'
+       ```
+       成功后应看到 `pattern_evolved` 事件，同时 `/ahp/patterns` 中对应模式的 `status`、`confirmed_count`、`candidate_count` / `active_count` 会变化。
+
 ---
 
 ## DEFER 与审批

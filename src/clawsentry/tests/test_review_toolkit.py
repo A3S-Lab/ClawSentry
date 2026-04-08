@@ -60,6 +60,21 @@ class TestBudget:
 
 class TestSafePath:
     @pytest.mark.asyncio
+    async def test_workspace_root_can_be_rebound(self, tmp_path: Path) -> None:
+        original = tmp_path / "original"
+        worker = tmp_path / "worker"
+        original.mkdir()
+        worker.mkdir()
+        (worker / "README.md").write_text("worker workspace", encoding="utf-8")
+
+        tk = ReadOnlyToolkit(original, StubTrajectoryStore())
+        tk.set_workspace_root(worker)
+
+        result = await tk.read_file("README.md")
+        assert result == "worker workspace"
+        assert tk.workspace_root == worker.resolve()
+
+    @pytest.mark.asyncio
     async def test_rejects_dotdot(self, tmp_path: Path) -> None:
         tk = ReadOnlyToolkit(tmp_path, StubTrajectoryStore())
         result = await tk.read_file("../outside.txt")

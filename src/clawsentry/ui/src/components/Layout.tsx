@@ -11,8 +11,8 @@ const navItems = [
 ]
 
 const PAGE_TITLES: Record<string, string> = {
-  '/': 'Dashboard',
-  '/sessions': 'Sessions',
+  '/': 'Security Console',
+  '/sessions': 'Session Inventory',
   '/alerts': 'Alerts',
   '/defer': 'DEFER Panel',
 }
@@ -28,7 +28,7 @@ export default function Layout() {
       <aside className="sidebar">
         <div className="sidebar-header">
           <div className="sidebar-logo">CLAWSENTRY</div>
-          <div className="subtitle">AHP Security Monitor</div>
+          <div className="subtitle">Security Operations Console</div>
         </div>
         <nav className="sidebar-nav">
           {navItems.map(({ to, icon: Icon, label }) => (
@@ -44,7 +44,7 @@ export default function Layout() {
           ))}
         </nav>
         <div className="sidebar-footer">
-          AHP Protocol v2
+          Framework / Workspace / Session
         </div>
       </aside>
       <div className="main-content">

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
 import { setToken } from './api/client'
@@ -11,7 +11,8 @@ import Alerts from './pages/Alerts'
 import DeferPanel from './pages/DeferPanel'
 
 export default function App() {
-  const { authenticated, checking, check, login } = useAuth()
+  const { authenticated, check, login } = useAuth()
+  const [bootstrapped, setBootstrapped] = useState(false)
 
   // Auto-login from URL ?token= parameter
   useEffect(() => {
@@ -26,11 +27,15 @@ export default function App() {
         : window.location.pathname
       window.history.replaceState({}, '', cleanUrl)
     }
+    setBootstrapped(true)
   }, [])
 
-  useEffect(() => { check() }, [check])
+  useEffect(() => {
+    if (!bootstrapped) return
+    check()
+  }, [bootstrapped, check])
 
-  if (checking && authenticated === null) {
+  if (!bootstrapped || authenticated === null) {
     return (
       <div className="login-container">
         <div style={{ textAlign: 'center' }}>

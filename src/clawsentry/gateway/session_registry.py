@@ -64,6 +64,14 @@ class SessionRegistry:
         tool_name = event.get("tool_name")
         decision_verdict = str(decision.get("decision") or "unknown")
         actual_tier = str(meta.get("actual_tier") or "unknown")
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        workspace_root = str(
+            payload.get("cwd")
+            or payload.get("working_directory")
+            or payload.get("workspace_root")
+            or ""
+        )
+        transcript_path = str(payload.get("transcript_path") or "")
 
         session = self._sessions.pop(session_id, None)
         if session is None:
@@ -86,11 +94,17 @@ class SessionRegistry:
                 "risk_hints_seen": set(),
                 "tools_used": set(),
                 "risk_timeline": deque(maxlen=self.max_timeline_per_session),
+                "workspace_root": "",
+                "transcript_path": "",
             }
 
         session["agent_id"] = str(event.get("agent_id") or session["agent_id"])
         session["source_framework"] = str(event.get("source_framework") or session["source_framework"])
         session["caller_adapter"] = str(meta.get("caller_adapter") or session["caller_adapter"])
+        if workspace_root:
+            session["workspace_root"] = workspace_root
+        if transcript_path:
+            session["transcript_path"] = transcript_path
         session["event_count"] += 1
         session["decision_distribution"][decision_verdict] += 1
         session["actual_tier_distribution"][actual_tier] += 1
@@ -169,6 +183,8 @@ class SessionRegistry:
                 "agent_id": session["agent_id"],
                 "source_framework": session["source_framework"],
                 "caller_adapter": session["caller_adapter"],
+                "workspace_root": session["workspace_root"],
+                "transcript_path": session["transcript_path"],
                 "current_risk_level": session["current_risk_level"],
                 "cumulative_score": session["cumulative_score"],
                 "event_count": session["event_count"],
@@ -213,9 +229,18 @@ class SessionRegistry:
 
         return {
             "session_id": session_id,
+            "agent_id": session["agent_id"],
+            "source_framework": session["source_framework"],
+            "caller_adapter": session["caller_adapter"],
+            "workspace_root": session["workspace_root"],
+            "transcript_path": session["transcript_path"],
             "current_risk_level": session["current_risk_level"],
             "cumulative_score": session["cumulative_score"],
             "dimensions_latest": dict(session["dimensions_latest"]),
+            "event_count": session["event_count"],
+            "high_risk_event_count": session["high_risk_event_count"],
+            "first_event_at": session["first_event_at"],
+            "last_event_at": session["last_event_at"],
             "risk_timeline": [
                 {
                     "event_id": item["event_id"],

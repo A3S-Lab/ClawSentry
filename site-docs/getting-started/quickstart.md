@@ -22,6 +22,31 @@ description: 5 分钟内启动 ClawSentry 并对接 AI Agent 框架
 !!! info "为什么 Codex 不能自动拦截？"
     Codex CLI 目前没有提供原生 hook 机制。ClawSentry 通过监控其 session 日志文件实现实时评估和推荐，建议配合 `--approval-policy untrusted` 使用。
 
+## 第一次打开 Web UI，先看什么？
+
+如果你刚打开 `http://127.0.0.1:8080/ui?token=...`，先不要把它当成“图表页”，而要把它当成**安全监控台**：
+
+- **Dashboard**：先回答“现在哪一类框架、哪一个工作空间最值得看”
+- **Sessions**：再回答“同一框架下哪些 workspace 和 session 正在运行，哪些已经变危险”
+- **Session Detail**：最后回答“这个 session 为什么危险，它具体发生了什么”
+
+理解这三个层级最重要：
+
+- **Framework**：Claude Code / a3s-code / OpenClaw / Codex 这类运行时来源
+- **Workspace**：某个具体项目目录或工作区，例如 `/workspace/repo-alpha`
+- **Session**：该工作区中的某一次具体 Agent 会话
+
+:material-lightbulb-outline: 最简单的使用顺序可以记成：
+
+```text
+Dashboard -> Sessions -> Session Detail
+```
+
+- 如果你只盯一个框架，先找最危险的 workspace
+- 如果你同时盯多个框架，先找当前风险最高的 framework
+
+:material-arrow-right: 如果你想先把这个使用模型看懂，再看页面细节，直接读：[Web 安全仪表板说明](../dashboard/index.md)
+
 ---
 
 ## 接入步骤
@@ -130,6 +155,36 @@ description: 5 分钟内启动 ClawSentry 并对接 AI Agent 框架
     clawsentry start --framework a3s-code
     ```
 
+    这条命令负责 ClawSentry 侧的运行环境：初始化/合并项目配置、启动 Gateway、显示实时事件流。
+
+    ### 继续配置 a3s-code Agent
+
+    a3s-code 侧仍需要在你的 Agent 代码中显式设置 `SessionOptions().ahp_transport`，然后运行 Agent 脚本。
+
+    ```python
+    from a3s_code import Agent, SessionOptions, StdioTransport
+
+    agent = Agent.create("agent.hcl")
+    opts = SessionOptions()
+    opts.ahp_transport = StdioTransport(program="clawsentry-harness", args=[])
+    session = agent.session(".", opts, permissive=True)
+    ```
+
+    如需 HTTP 方式，可改用已验证的 `HttpTransport` 直连 Gateway：
+
+    ```python
+    import os
+    from a3s_code import Agent, HttpTransport, SessionOptions
+
+    agent = Agent.create("agent.hcl")
+    opts = SessionOptions()
+    token = os.environ["CS_AUTH_TOKEN"]
+    opts.ahp_transport = HttpTransport(
+        f"http://127.0.0.1:8080/ahp/a3s?token={token}"
+    )
+    session = agent.session(".", opts, permissive=True)
+    ```
+
     ??? example "终端输出示例"
         ```
         ClawSentry starting...
@@ -143,6 +198,8 @@ description: 5 分钟内启动 ClawSentry 并对接 AI Agent 框架
 
     ??? note "分步操作（高级用户）"
 
+        如果你不想使用 `clawsentry start`，可以把它拆成下面几步。`init` 只负责写项目配置，`gateway` 只负责启动服务，`watch` 只负责观察事件。
+
         **步骤 1：初始化**
 
         ```bash
@@ -150,7 +207,13 @@ description: 5 分钟内启动 ClawSentry 并对接 AI Agent 框架
         source .env.clawsentry
         ```
 
-        **步骤 2：在 Agent 代码中显式配置 AHP Transport（推荐）**
+        **步骤 2：启动 Gateway**
+
+        ```bash
+        clawsentry gateway
+        ```
+
+        **步骤 3：在 Agent 代码中显式配置 AHP Transport 并运行 Agent**
 
         ```python
         from a3s_code import Agent, SessionOptions, StdioTransport
@@ -176,23 +239,7 @@ description: 5 分钟内启动 ClawSentry 并对接 AI Agent 框架
         session = agent.session(".", opts, permissive=True)
         ```
 
-        **步骤 3：启动 Gateway**
-
-        ```bash
-        clawsentry gateway
-        ```
-
-        **步骤 4：运行你的 a3s-code Agent 脚本**
-
-        ```bash
-        python your_agent_script.py
-        ```
-
-        **步骤 5：实时监控（另一终端，可选）**
-
-        ```bash
-        clawsentry watch
-        ```
+        运行你的 a3s-code Agent 脚本后，如果你还想单独看事件流，可以在另一终端运行 `clawsentry watch`。
 
     ### 验证
 

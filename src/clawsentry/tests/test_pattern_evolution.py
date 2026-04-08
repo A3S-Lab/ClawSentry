@@ -489,6 +489,9 @@ class TestPatternsAPIEndpoint:
             resp = await client.get("/ahp/patterns")
             assert resp.status_code == 200
             data = resp.json()
+            assert data["enabled"] is True
+            assert data["store_path"] != ""
+            assert data["count"] == 1
             assert len(data["patterns"]) == 1
             assert data["patterns"][0]["status"] == "candidate"
 
@@ -505,6 +508,25 @@ class TestPatternsAPIEndpoint:
             assert resp.status_code == 200
             data = resp.json()
             assert data["result"] == "promoted_to_experimental"
+
+    @pytest.mark.asyncio
+    async def test_confirm_pattern_endpoint_rejects_non_boolean_confirmed(
+        self, app_with_evolution
+    ):
+        from httpx import AsyncClient, ASGITransport
+
+        app, gw = app_with_evolution
+        patterns = gw.evolution_manager.list_patterns()
+        pid = patterns[0]["id"]
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/ahp/patterns/confirm",
+                json={"pattern_id": pid, "confirmed": "false"},
+            )
+        assert resp.status_code == 400
+        assert "confirmed (bool)" in resp.text
 
     @pytest.mark.asyncio
     async def test_confirm_403_when_disabled(self, tmp_path):

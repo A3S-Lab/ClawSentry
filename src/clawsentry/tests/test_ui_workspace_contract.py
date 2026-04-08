@@ -1,0 +1,24 @@
+"""Static contract tests for framework/workspace aware UI monitoring views."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1] / "ui" / "src"
+
+
+def test_dashboard_surfaces_framework_and_workspace_coverage_sections() -> None:
+    source = (ROOT / "pages" / "Dashboard.tsx").read_text(encoding="utf-8")
+
+    assert "Framework Coverage" in source
+    assert "Workspace Risk Board" in source
+    assert "Priority Sessions" in source
+
+
+def test_sessions_page_groups_by_framework_and_workspace() -> None:
+    source = (ROOT / "pages" / "Sessions.tsx").read_text(encoding="utf-8")
+
+    assert "Framework Overview" in source
+    assert "workspace_root" in source
+    assert "groupedSessions" in source

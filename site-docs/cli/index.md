@@ -52,7 +52,16 @@ clawsentry-stack     # 等价于 clawsentry stack
 | [`config`](#clawsentry-config) | 管理项目安全预设 | `clawsentry config init --preset high` |
 | [`latch`](#clawsentry-latch) | 管理 Latch 移动监控 | `clawsentry latch install` |
 
-> **新用户推荐路径：** `clawsentry init` → `clawsentry start` → `clawsentry doctor` → `clawsentry watch`
+> **新用户推荐路径：** 先运行 `clawsentry start --framework <你的框架>`。它会自动补齐项目配置、启动 Gateway，并在前台显示 `watch` 事件流；只有需要手动拆分步骤或排障时，再单独使用 `init`、`gateway`、`watch`。
+
+!!! tip "这些命令是什么关系？"
+    | 命令 | 你什么时候用 | 与 `start` 的关系 |
+    |------|---------------|-------------------|
+    | `clawsentry start` | 日常启动和新用户接入 | 推荐入口；内部会按需调用初始化、启动 Gateway、接上事件流 |
+    | `clawsentry init` | 只想生成/合并 `.env.clawsentry` 或安装框架 hook | 手动配置步骤；`start` 在缺配置时会自动做 |
+    | `clawsentry gateway` | 只启动后台服务、systemd/Docker/调试 transport | `start --no-watch` 的底层服务部分 |
+    | `clawsentry watch` | Gateway 已经在跑，只想另开终端看实时事件 | `start` 的前台监控部分 |
+    | `clawsentry-harness` | a3s-code stdio transport 自动调用 | 不是普通用户入口，通常只出现在 SDK transport 配置里 |
 
 !!! abstract "本页快速导航"
     [start](#clawsentry-start) · [stop](#clawsentry-stop) · [status](#clawsentry-status) · [init](#clawsentry-init) · [gateway](#clawsentry-gateway) · [stack](#clawsentry-stack) · [harness](#clawsentry-harness) · [watch](#clawsentry-watch) · [audit](#clawsentry-audit) · [doctor](#clawsentry-doctor) · [config](#clawsentry-config) · [integrations](#clawsentry-integrations) · [latch](#clawsentry-latch)
@@ -61,7 +70,7 @@ clawsentry-stack     # 等价于 clawsentry stack
 
 ## clawsentry start
 
-**一键启动 ClawSentry 监督网关**（推荐方式）。自动检测框架、初始化配置、启动 Gateway 并显示实时监控。
+**一键启动 ClawSentry 监督网关**（推荐方式）。自动检测或按参数选择框架，补齐配置，启动 Gateway，并显示实时监控。
 
 ### 语法
 

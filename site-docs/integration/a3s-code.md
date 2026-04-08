@@ -45,64 +45,26 @@ which clawsentry-harness  # stdio 模式需要此命令在 PATH 中
 
 ## 快速开始
 
-### 一键初始化
+### 最简单路径
 
-使用 `clawsentry init` 自动生成集成配置：
-
-```bash
-clawsentry init a3s-code --auto-detect
-```
-
-此命令会在当前目录生成：
-
-- **`.env.clawsentry`** — 包含 UDS 路径和认证 Token 的环境变量文件（权限 `600`）
-
-生成的 `.env.clawsentry` 内容示例：
-
-```ini
-# ClawSentry — a3s-code integration config
-CS_FRAMEWORK=a3s-code
-CS_UDS_PATH=/tmp/clawsentry.sock
-CS_AUTH_TOKEN=<自动生成的安全 token>
-```
-
-!!! tip "已有配置？"
-    如果 `.env.clawsentry` 已存在，`clawsentry init a3s-code` 默认会增量合并，不会轮换已有 `CS_AUTH_TOKEN`。只有明确要替换整个文件时才使用 `--force`：
-    ```bash
-    clawsentry init a3s-code --auto-detect --force
-    ```
-
-### 启动 Gateway
+日常接入时优先使用 `clawsentry start`，不要先手动拆 `init` / `gateway` / `watch`：
 
 ```bash
-# 加载环境变量
-source .env.clawsentry
-
-# 启动 Gateway（监听 UDS + HTTP）
-clawsentry gateway
+clawsentry start --framework a3s-code
 ```
 
-启动后日志输出：
+它会自动完成 ClawSentry 侧的工作：
 
-```
-INFO [ahp-stack] Gateway-only starting: gateway=http://127.0.0.1:8080/ahp uds=/tmp/clawsentry.sock
-```
+- 生成或增量合并当前项目的 `.env.clawsentry`
+- 加载配置并启动 Gateway（UDS + HTTP）
+- 在前台显示 `clawsentry watch` 实时事件流
 
-Gateway 同时监听以下端点：
+!!! important "a3s-code 还需要一行 SDK 配置"
+    `clawsentry start` 负责启动 ClawSentry，不会自动改写你的 a3s-code Agent 代码。请在创建 session 前显式设置 `SessionOptions().ahp_transport`。
 
-| 端点 | 协议 | 用途 |
-|------|------|------|
-| `/tmp/clawsentry.sock` | UDS (JSON-RPC 2.0, 长度前缀帧) | stdio harness 连接 |
-| `http://127.0.0.1:8080/ahp` | HTTP (JSON-RPC 2.0) | 通用 RPC 端点 |
-| `http://127.0.0.1:8080/ahp/a3s` | HTTP (JSON-RPC AHP) | a3s-code `HttpTransport` 直连 |
+### 配置 a3s-code Transport
 
-### 接入 a3s-code
-
-a3s-code 的真实主路径是 SDK Transport：在代码中显式设置 `SessionOptions().ahp_transport`。
-
-### SDK Transport（推荐）
-
-默认推荐：在 SDK 中显式指定 `StdioTransport`，让 a3s-code 启动 `clawsentry-harness` 并通过本机 UDS 访问 Gateway：
+默认推荐 `StdioTransport`，让 a3s-code 启动 `clawsentry-harness` 并通过本机 UDS 访问 Gateway：
 
 ```python
 from a3s_code import Agent, SessionOptions, StdioTransport
@@ -113,7 +75,7 @@ opts.ahp_transport = StdioTransport(program="clawsentry-harness", args=[])
 session = agent.session(".", opts, permissive=True)
 ```
 
-也可以使用已验证的 `HttpTransport` 直连 Gateway HTTP 端点：
+如需 HTTP 方式，可以使用已验证的 `HttpTransport` 直连 Gateway HTTP 端点：
 
 ```python
 import os
@@ -134,14 +96,39 @@ session = agent.session(".", opts, permissive=True)
 !!! note "工作原理"
     SDK 路径下，a3s-code 在每次工具调用前后自动发送 AHP 事件。
 
-### 验证集成
+### 运行 Agent
+
+完成 `SessionOptions().ahp_transport` 配置后，直接运行你的 a3s-code Agent 脚本即可。使用 `clawsentry start` 时，ClawSentry 已经在当前终端显示实时事件流，不需要再额外打开一个 `clawsentry watch` 终端。
 
 ```bash
-# 在另一个终端，启动实时监控
-clawsentry watch
+python your_agent_script.py
 ```
 
-然后正常使用 a3s-code，你将在 `watch` 终端看到每个工具调用的实时决策输出。
+如果你选择手动拆分命令，才需要在另一个终端运行 `clawsentry watch`。
+
+---
+
+## 手动拆分命令（高级）
+
+如果你要把 `start` 拆开运行，命令关系如下：
+
+```bash
+clawsentry init a3s-code     # 只生成/合并 .env.clawsentry
+source .env.clawsentry      # 手动加载 token、UDS、端口等环境变量
+clawsentry gateway          # 只启动 Gateway 服务，不显示事件流
+clawsentry watch            # 可选：仅在手动拆分时另开终端观察事件流
+```
+
+Gateway 默认监听：
+
+| 端点 | 协议 | 用途 |
+|------|------|------|
+| `/tmp/clawsentry.sock` | UDS (JSON-RPC 2.0, 长度前缀帧) | `StdioTransport` / `clawsentry-harness` 连接 |
+| `http://127.0.0.1:8080/ahp` | HTTP (JSON-RPC 2.0) | 通用 RPC 端点 |
+| `http://127.0.0.1:8080/ahp/a3s` | HTTP (JSON-RPC AHP) | a3s-code `HttpTransport` 直连 |
+
+!!! tip "已有配置？"
+    如果 `.env.clawsentry` 已存在，`clawsentry init a3s-code` 默认会增量合并，不会轮换已有 `CS_AUTH_TOKEN`。只有明确要替换整个文件时才使用 `--force`。
 
 ---
 

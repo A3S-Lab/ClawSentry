@@ -75,8 +75,6 @@ class SessionEnforcementPolicy:
 
     def check(self, session_id: str) -> Optional[SessionEnforcement]:
         """Return current enforcement if active, auto-release on cooldown expiry."""
-        if not self.enabled:
-            return None
         enf = self._enforced.get(session_id)
         if enf is None:
             return None
@@ -85,6 +83,26 @@ class SessionEnforcementPolicy:
             if elapsed >= self.cooldown_seconds:
                 del self._enforced[session_id]
                 return None
+        return enf
+
+    def force(
+        self,
+        session_id: str,
+        *,
+        action: EnforcementAction,
+        high_risk_count: int = 1,
+    ) -> SessionEnforcement:
+        """Force enforcement for a session independent of threshold evaluation."""
+        now = time.time()
+        enf = SessionEnforcement(
+            session_id=session_id,
+            action=action,
+            triggered_at=now,
+            last_high_risk_at=now,
+            high_risk_count=max(high_risk_count, 1),
+        )
+        self._enforced[session_id] = enf
+        self._evict_if_needed()
         return enf
 
     def evaluate_threshold(

@@ -26,6 +26,7 @@ logger = logging.getLogger("ahp.llm-factory")
 def build_analyzer_from_env(
     *,
     trajectory_store: Any = None,
+    session_registry: Any = None,
     workspace_root: Optional[Path] = None,
     patterns_path: Optional[str] = None,
     evolved_patterns_path: Optional[str] = None,
@@ -111,6 +112,7 @@ def build_analyzer_from_env(
                 skill_registry=skill_registry,
                 config=agent_config,
                 trajectory_store=trajectory_store,
+                session_registry=session_registry,
             )
             analyzers.append(agent)
             logger.info("L3 AgentAnalyzer enabled")

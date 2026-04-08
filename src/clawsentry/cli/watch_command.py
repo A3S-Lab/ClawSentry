@@ -27,6 +27,7 @@ _COLORS: dict[str, str] = {
 }
 
 _RISK_COLORS: dict[str, str] = {
+    "critical": "red",
     "high": "red",
     "medium": "yellow",
     "low": "green",
@@ -50,9 +51,14 @@ _EMOJIS: dict[str, str] = {
     "risk_change": "📊",
     "enforcement": "🔒",
     "expires": "⏱️",
+    "trajectory": "🧭",
+    "post_action": "🛡️",
+    "pattern_candidate": "🧪",
+    "pattern_evolved": "🧬",
     "risk_high": "🔴",
     "risk_medium": "🟡",
     "risk_low": "🟢",
+    "risk_critical": "🔴",
 }
 
 _CMD_MAX_LEN = 50
@@ -531,6 +537,158 @@ def _format_defer_resolved(
     return "\n".join(lines)
 
 
+def _format_trajectory_alert(
+    event: dict,
+    *,
+    color: bool = True,
+    no_emoji: bool = False,
+    compact: bool = False,
+) -> str:
+    """Format a multi-step trajectory alert for terminal output."""
+    hms = _timestamp_hms(event.get("timestamp"))
+    session_id = str(event.get("session_id") or "unknown")
+    sequence_id = str(event.get("sequence_id") or "unknown")
+    risk = str(event.get("risk_level") or "unknown")
+    reason = str(event.get("reason") or "")
+    handling = str(event.get("handling") or "broadcast")
+    matched = event.get("matched_event_ids") or []
+    matched_text = ", ".join(str(item) for item in matched) if matched else "(none)"
+
+    e = _emoji("trajectory", no_emoji=no_emoji)
+    e_str = f"{e} " if e else ""
+    label = _c("red", f"{e_str}TRAJECTORY", color=color)
+    ts_str = _c("grey", f"[{hms}]", color=color)
+
+    if compact:
+        return (
+            f"{ts_str} {label}  {sequence_id}  "
+            f"Session={session_id}  Risk={risk}  Handling={handling}"
+        )
+
+    lines = [f"{ts_str} {label}  {sequence_id}"]
+    detail_items = [
+        f"Session: {_c('grey', session_id, color=color)}",
+        f"Risk: {_risk_display(risk, color=color, no_emoji=no_emoji)}",
+        f"Handling: {_c('grey', handling, color=color)}",
+    ]
+    if reason:
+        detail_items.append(f"Reason: {_c('grey', reason, color=color)}")
+    detail_items.append(f"Matched events: {_c('grey', matched_text, color=color)}")
+
+    for i, item in enumerate(detail_items):
+        connector = "└─" if i == len(detail_items) - 1 else "├─"
+        lines.append(f"{_TREE_INDENT}{connector} {item}")
+    return "\n".join(lines)
+
+
+def _format_post_action_finding(
+    event: dict,
+    *,
+    color: bool = True,
+    no_emoji: bool = False,
+    compact: bool = False,
+) -> str:
+    """Format a post-action guardrail finding for terminal output."""
+    hms = _timestamp_hms(event.get("timestamp"))
+    session_id = str(event.get("session_id") or "unknown")
+    tier = str(event.get("tier") or "unknown")
+    score = event.get("score")
+    handling = str(event.get("handling") or "broadcast")
+    patterns = event.get("patterns_matched") or []
+    patterns_text = ", ".join(str(item) for item in patterns) if patterns else "(none)"
+
+    e = _emoji("post_action", no_emoji=no_emoji)
+    e_str = f"{e} " if e else ""
+    label = _c("magenta", f"{e_str}POST-ACTION", color=color)
+    ts_str = _c("grey", f"[{hms}]", color=color)
+    if compact:
+        return (
+            f"{ts_str} {label}  {tier}  "
+            f"Session={session_id}  Score={score}  Handling={handling}"
+        )
+
+    lines = [f"{ts_str} {label}  {tier}"]
+    detail_items = [
+        f"Session: {_c('grey', session_id, color=color)}",
+        f"Score: {_c('grey', str(score), color=color)}",
+        f"Handling: {_c('grey', handling, color=color)}",
+        f"Patterns: {_c('grey', patterns_text, color=color)}",
+    ]
+    for i, item in enumerate(detail_items):
+        connector = "└─" if i == len(detail_items) - 1 else "├─"
+        lines.append(f"{_TREE_INDENT}{connector} {item}")
+    return "\n".join(lines)
+
+
+def _format_pattern_evolved(
+    event: dict,
+    *,
+    color: bool = True,
+    no_emoji: bool = False,
+    compact: bool = False,
+) -> str:
+    """Format a self-evolving pattern lifecycle event."""
+    hms = _timestamp_hms(event.get("timestamp"))
+    pattern_id = str(event.get("pattern_id") or "unknown")
+    result = str(event.get("result") or event.get("status") or "unknown")
+    confirmed = event.get("confirmed")
+
+    e = _emoji("pattern_evolved", no_emoji=no_emoji)
+    e_str = f"{e} " if e else ""
+    label = _c("cyan", f"{e_str}PATTERN EVOLVED", color=color)
+    ts_str = _c("grey", f"[{hms}]", color=color)
+
+    if compact:
+        return f"{ts_str} {label}  {pattern_id}  Result={result}"
+
+    lines = [f"{ts_str} {label}  {pattern_id}"]
+    detail_items = [f"Result: {_c('grey', result, color=color)}"]
+    if confirmed is not None:
+        detail_items.append(f"Confirmed: {_c('grey', str(bool(confirmed)).lower(), color=color)}")
+
+    for i, item in enumerate(detail_items):
+        connector = "└─" if i == len(detail_items) - 1 else "├─"
+        lines.append(f"{_TREE_INDENT}{connector} {item}")
+    return "\n".join(lines)
+
+
+def _format_pattern_candidate(
+    event: dict,
+    *,
+    color: bool = True,
+    no_emoji: bool = False,
+    compact: bool = False,
+) -> str:
+    """Format a new candidate extracted by the evolution manager."""
+    hms = _timestamp_hms(event.get("timestamp"))
+    pattern_id = str(event.get("pattern_id") or "unknown")
+    session_id = str(event.get("session_id") or "unknown")
+    status = str(event.get("status") or "candidate")
+    source_framework = str(event.get("source_framework") or "unknown")
+
+    e = _emoji("pattern_candidate", no_emoji=no_emoji)
+    e_str = f"{e} " if e else ""
+    label = _c("yellow", f"{e_str}PATTERN CANDIDATE", color=color)
+    ts_str = _c("grey", f"[{hms}]", color=color)
+
+    if compact:
+        return (
+            f"{ts_str} {label}  {pattern_id}  "
+            f"Session={session_id}  Status={status}  Framework={source_framework}"
+        )
+
+    lines = [f"{ts_str} {label}  {pattern_id}"]
+    detail_items = [
+        f"Session: {_c('grey', session_id, color=color)}",
+        f"Status: {_c('grey', status, color=color)}",
+        f"Framework: {_c('grey', source_framework, color=color)}",
+    ]
+    for i, item in enumerate(detail_items):
+        connector = "└─" if i == len(detail_items) - 1 else "├─"
+        lines.append(f"{_TREE_INDENT}{connector} {item}")
+    return "\n".join(lines)
+
+
 def format_event(
     event: dict,
     *,
@@ -566,6 +724,22 @@ def format_event(
         return _format_defer_pending(event, color=color, no_emoji=no_emoji)
     if event_type == "defer_resolved":
         return _format_defer_resolved(event, color=color, no_emoji=no_emoji)
+    if event_type == "trajectory_alert":
+        return _format_trajectory_alert(
+            event, color=color, no_emoji=no_emoji, compact=compact
+        )
+    if event_type == "post_action_finding":
+        return _format_post_action_finding(
+            event, color=color, no_emoji=no_emoji, compact=compact
+        )
+    if event_type == "pattern_evolved":
+        return _format_pattern_evolved(
+            event, color=color, no_emoji=no_emoji, compact=compact
+        )
+    if event_type == "pattern_candidate":
+        return _format_pattern_candidate(
+            event, color=color, no_emoji=no_emoji, compact=compact
+        )
 
     # Fallback: compact JSON
     return json.dumps(event)

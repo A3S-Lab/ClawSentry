@@ -366,6 +366,7 @@ async def run_stack(args: argparse.Namespace) -> None:
     )
     analyzer = build_analyzer_from_env(
         trajectory_store=gateway.trajectory_store,
+        session_registry=gateway.session_registry,
         patterns_path=detection_config.attack_patterns_path,
         evolved_patterns_path=detection_config.evolved_patterns_path if detection_config.evolving_enabled else None,
         l3_budget_ms=detection_config.l3_budget_ms,

@@ -1,208 +1,295 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { Activity, AlertTriangle, FolderTree, Layers3, ShieldCheck, Siren } from 'lucide-react'
 import { api } from '../api/client'
-import type { SummaryResponse, HealthResponse } from '../api/types'
+import type { HealthResponse, SessionSummary, SummaryResponse } from '../api/types'
 import MetricCard from '../components/MetricCard'
-import DecisionFeed from '../components/DecisionFeed'
+import RuntimeFeed from '../components/RuntimeFeed'
 import SkeletonCard from '../components/SkeletonCard'
+import { RiskBadge } from '../components/badges'
 import {
-  PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip,
-  ResponsiveContainer, CartesianGrid,
-} from 'recharts'
-import { Activity, ShieldX, Cpu, Clock } from 'lucide-react'
+  activityState,
+  formatRelativeTime,
+  groupSessions,
+  riskRank,
+  workspaceLabel,
+} from '../lib/sessionGroups'
 
-const RISK_COLORS: Record<string, string> = {
-  low: '#22c55e', medium: '#f59e0b', high: '#f97316', critical: '#ef4444',
-}
-const DECISION_COLORS: Record<string, string> = {
-  allow: '#22c55e', block: '#ef4444', defer: '#f59e0b', modify: '#60a5fa',
-}
-const TIER_COLORS: Record<string, string> = {
-  L1: '#a78bfa', L2: '#60a5fa', L3: '#f97316',
+function formatUptime(seconds: number): string {
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`
+  return `${Math.floor(seconds / 86400)}d`
 }
 
-const TOOLTIP_STYLE = {
-  background: '#1a1a24',
-  border: '1px solid rgba(255,255,255,0.07)',
-  borderRadius: 8,
-  fontSize: 12,
-  color: '#f1f0f5',
-  boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-}
-
-function formatUptime(s: number): string {
-  if (s < 3600) return `${Math.floor(s / 60)}m`
-  if (s < 86400) return `${Math.floor(s / 3600)}h`
-  return `${Math.floor(s / 86400)}d`
+function FrameworkChip({ framework, count }: { framework: string; count: number }) {
+  return (
+    <span className="framework-chip">
+      <span>{framework}</span>
+      <strong>{count}</strong>
+    </span>
+  )
 }
 
 export default function Dashboard() {
   const [summary, setSummary] = useState<SummaryResponse | null>(null)
   const [health, setHealth] = useState<HealthResponse | null>(null)
+  const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const load = () => Promise.all([
-      api.summary().then(setSummary),
-      api.health().then(setHealth),
-    ]).catch(() => {}).finally(() => setLoading(false))
+    const load = () =>
+      Promise.all([
+        api.summary().then(setSummary),
+        api.health().then(setHealth),
+        api.sessions({ sort: 'risk_level', limit: 120 }).then(setSessions),
+      ])
+        .catch(() => {})
+        .finally(() => setLoading(false))
+
     load()
     const timer = setInterval(load, 10_000)
     return () => clearInterval(timer)
   }, [])
 
+  const groupedSessions = groupSessions(sessions)
+  const totalWorkspaces = groupedSessions.reduce((sum, item) => sum + item.workspaceCount, 0)
+  const criticalSessions = sessions.filter(session => session.current_risk_level === 'critical').length
+  const highRiskSessions = sessions.filter(session => riskRank(session.current_risk_level) <= 1).length
   const blockRate = summary
-    ? ((summary.by_decision['block'] || 0) / Math.max(summary.total_records, 1) * 100).toFixed(1)
+    ? ((summary.by_decision.block || 0) / Math.max(summary.total_records, 1) * 100).toFixed(1)
     : '—'
 
-  const l3Count = summary?.by_actual_tier?.['L3'] ?? summary?.by_actual_tier?.['l3'] ?? 0
-  const l3Rate = summary
-    ? ((l3Count / Math.max(summary.total_records, 1)) * 100).toFixed(1)
-    : '—'
+  const prioritySessions = [...sessions]
+    .sort((a, b) => {
+      const rankDiff = riskRank(a.current_risk_level) - riskRank(b.current_risk_level)
+      if (rankDiff !== 0) return rankDiff
+      return new Date(b.last_event_at).getTime() - new Date(a.last_event_at).getTime()
+    })
+    .slice(0, 6)
 
-  const riskData = summary
-    ? Object.entries(summary.by_risk_level).map(([name, value]) => ({ name, value }))
-    : []
-
-  const decisionData = summary
-    ? Object.entries(summary.by_decision).map(([name, value]) => ({ name, value }))
-    : []
-
-  const tierData = summary?.by_actual_tier
-    ? Object.entries(summary.by_actual_tier)
-        .map(([name, value]) => ({ name: name.toUpperCase(), value }))
-        .sort((a, b) => a.name.localeCompare(b.name))
-    : []
+  const priorityWorkspaces = groupedSessions
+    .flatMap(framework => framework.workspaces.map(workspace => ({ ...workspace, framework: framework.framework })))
+    .sort((a, b) => {
+      const rankDiff = riskRank(a.highestRisk) - riskRank(b.highestRisk)
+      if (rankDiff !== 0) return rankDiff
+      return new Date(b.latestActivityAt).getTime() - new Date(a.latestActivityAt).getTime()
+    })
+    .slice(0, 6)
 
   if (loading) {
     return (
       <div>
         <div className="metric-grid" style={{ marginBottom: 20 }}>
-          {[0,1,2,3].map(i => <SkeletonCard key={i} rows={2} height={90} />)}
+          {[0, 1, 2, 3].map(index => <SkeletonCard key={index} rows={2} height={104} />)}
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 16 }}>
-          <SkeletonCard rows={6} height={460} />
-          <SkeletonCard rows={4} height={460} />
+        <div className="dashboard-grid dashboard-grid-primary">
+          <SkeletonCard rows={8} height={430} />
+          <SkeletonCard rows={8} height={430} />
         </div>
       </div>
     )
   }
 
   return (
-    <div>
-      {/* Metric cards */}
+    <div className="dashboard-shell">
+      <section className="hero-banner">
+        <div>
+          <p className="eyebrow">Security Console</p>
+          <h1>Cross-framework session coverage for live agent operations.</h1>
+          <p className="hero-copy">
+            Track every framework, every workspace, and every session from one monitoring surface.
+            High-risk workspaces rise to the top automatically, while live runtime events stay visible.
+          </p>
+          <div className="hero-chip-row">
+            {Object.entries(summary?.by_source_framework || {}).map(([framework, count]) => (
+              <FrameworkChip key={framework} framework={framework} count={count} />
+            ))}
+          </div>
+        </div>
+        <div className="hero-panel">
+          <div className="hero-panel-header">
+            <Siren size={14} />
+            Current posture
+          </div>
+          <div className="hero-panel-body">
+            <div>
+              <span className="hero-panel-label">Critical sessions</span>
+              <strong>{criticalSessions}</strong>
+            </div>
+            <div>
+              <span className="hero-panel-label">High-risk workspaces</span>
+              <strong>{priorityWorkspaces.filter(workspace => riskRank(workspace.highestRisk) <= 1).length}</strong>
+            </div>
+            <div>
+              <span className="hero-panel-label">Gateway uptime</span>
+              <strong>{health ? formatUptime(health.uptime_seconds) : '—'}</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <div className="metric-grid" style={{ marginBottom: 20 }}>
         <MetricCard
-          label="Total Decisions"
-          value={summary?.total_records.toLocaleString() ?? '—'}
+          label="Tracked Sessions"
+          value={sessions.length.toLocaleString()}
           accent="purple"
-          icon={<Activity size={20} />}
-          subtext={`${summary?.by_event_type?.['pre_action'] ?? 0} pre-action`}
+          icon={<Layers3 size={20} />}
+          subtext={`${totalWorkspaces} workspaces across ${groupedSessions.length} frameworks`}
+        />
+        <MetricCard
+          label="High-Risk Sessions"
+          value={highRiskSessions.toLocaleString()}
+          accent="red"
+          icon={<AlertTriangle size={20} />}
+          subtext={`${criticalSessions} critical right now`}
         />
         <MetricCard
           label="Block Rate"
           value={`${blockRate}%`}
-          accent="red"
-          icon={<ShieldX size={20} />}
-          subtext={`${summary?.by_decision?.['block'] ?? 0} blocked`}
-        />
-        <MetricCard
-          label="L3 Escalation Rate"
-          value={`${l3Rate}%`}
           accent="amber"
-          icon={<Cpu size={20} />}
-          subtext={`${l3Count} agent reviews`}
+          icon={<ShieldCheck size={20} />}
+          subtext={`${summary?.by_decision?.block ?? 0} blocks in current window`}
         />
         <MetricCard
-          label="Uptime"
-          value={health ? formatUptime(health.uptime_seconds) : '—'}
+          label="Live Events"
+          value={(health?.trajectory_count ?? 0).toLocaleString()}
           accent="blue"
-          icon={<Clock size={20} />}
-          subtext={health ? `${health.trajectory_count.toLocaleString()} total events` : undefined}
+          icon={<Activity size={20} />}
+          subtext={health ? `${formatUptime(health.uptime_seconds)} uptime` : undefined}
         />
       </div>
 
-      {/* Middle row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 16, marginBottom: 16 }}>
-        <DecisionFeed />
-        <div className="card">
-          <div className="card-header">Risk Distribution</div>
-          <div style={{ height: 360 }}>
-            {riskData.length > 0 ? (
-              <ResponsiveContainer>
-                <PieChart>
-                  <Pie
-                    data={riskData}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%" cy="50%"
-                    outerRadius={110}
-                    innerRadius={55}
-                    paddingAngle={3}
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                    labelLine={false}
-                    fontSize={11}
-                  >
-                    {riskData.map(entry => (
-                      <Cell key={entry.name} fill={RISK_COLORS[entry.name] || '#52515e'} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={TOOLTIP_STYLE} />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
-              <p className="text-muted" style={{ padding: 16, fontSize: '0.8rem' }}>No data yet</p>
+      <div className="dashboard-grid dashboard-grid-primary">
+        <section className="card section-card">
+          <div className="section-card-header">
+            <div>
+              <p className="section-kicker">Coverage</p>
+              <h2>Framework Coverage</h2>
+            </div>
+            <Link to="/sessions" className="section-link">Open session inventory</Link>
+          </div>
+          <div className="framework-coverage-grid">
+            {groupedSessions.map(group => (
+              <article key={group.framework} className="framework-panel">
+                <div className="framework-panel-top">
+                  <div>
+                    <h3>{group.framework}</h3>
+                    <p>{group.workspaceCount} workspaces</p>
+                  </div>
+                  <RiskBadge level={group.highestRisk} />
+                </div>
+                <div className="framework-panel-metrics">
+                  <div>
+                    <span>Sessions</span>
+                    <strong>{group.sessionCount}</strong>
+                  </div>
+                  <div>
+                    <span>High risk</span>
+                    <strong>{group.highRiskSessionCount}</strong>
+                  </div>
+                  <div>
+                    <span>Events</span>
+                    <strong>{group.totalEvents}</strong>
+                  </div>
+                </div>
+                <div className="framework-workspace-list">
+                  {group.workspaces.slice(0, 3).map(workspace => (
+                    <div key={workspace.key} className="framework-workspace-row">
+                      <div>
+                        <strong>{workspace.workspaceLabel}</strong>
+                        <span>{formatRelativeTime(workspace.latestActivityAt)}</span>
+                      </div>
+                      <RiskBadge level={workspace.highestRisk} />
+                    </div>
+                  ))}
+                </div>
+              </article>
+            ))}
+            {groupedSessions.length === 0 && (
+              <div className="empty-inline">No framework activity yet.</div>
             )}
           </div>
-        </div>
+        </section>
+
+        <RuntimeFeed />
       </div>
 
-      {/* Bottom row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <div className="card">
-          <div className="card-header">Decision Verdicts</div>
-          <div style={{ height: 220 }}>
-            {decisionData.length > 0 ? (
-              <ResponsiveContainer>
-                <BarChart data={decisionData} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-                  <XAxis dataKey="name" tick={{ fill: '#8b8a9b', fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: '#8b8a9b', fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
-                  <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                    {decisionData.map(entry => (
-                      <Cell key={entry.name} fill={DECISION_COLORS[entry.name] || '#52515e'} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <p className="text-muted" style={{ padding: 16, fontSize: '0.8rem' }}>No data yet</p>
+      <div className="dashboard-grid dashboard-grid-secondary">
+        <section className="card section-card">
+          <div className="section-card-header">
+            <div>
+              <p className="section-kicker">Workspaces</p>
+              <h2>Workspace Risk Board</h2>
+            </div>
+            <span className="section-meta">{priorityWorkspaces.length} prioritized</span>
+          </div>
+          <div className="workspace-board">
+            {priorityWorkspaces.map(workspace => (
+              <article key={workspace.key} className="workspace-card">
+                <div className="workspace-card-top">
+                  <div>
+                    <p className="workspace-framework">{workspace.framework}</p>
+                    <h3>{workspace.workspaceLabel}</h3>
+                  </div>
+                  <RiskBadge level={workspace.highestRisk} />
+                </div>
+                <p className="workspace-root mono">{workspace.workspaceRoot || 'workspace_root unavailable'}</p>
+                <div className="workspace-stats">
+                  <span>{workspace.sessionCount} sessions</span>
+                  <span>{workspace.highRiskSessionCount} high risk</span>
+                  <span>{workspace.totalEvents} events</span>
+                </div>
+                <div className="workspace-footer">
+                  <span className={`activity-pill activity-pill-${activityState(workspace.latestActivityAt)}`}>
+                    {formatRelativeTime(workspace.latestActivityAt)}
+                  </span>
+                  <span className="mono">{workspace.callerAdapters.join(', ') || 'adapter n/a'}</span>
+                </div>
+              </article>
+            ))}
+            {priorityWorkspaces.length === 0 && (
+              <div className="empty-inline">No workspace telemetry yet.</div>
             )}
           </div>
-        </div>
+        </section>
 
-        <div className="card">
-          <div className="card-header">Policy Tier Distribution</div>
-          <div style={{ height: 220 }}>
-            {tierData.length > 0 ? (
-              <ResponsiveContainer>
-                <BarChart data={tierData} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-                  <XAxis dataKey="name" tick={{ fill: '#8b8a9b', fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: '#8b8a9b', fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
-                  <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                    {tierData.map(entry => (
-                      <Cell key={entry.name} fill={TIER_COLORS[entry.name] || '#a78bfa'} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <p className="text-muted" style={{ padding: 16, fontSize: '0.8rem' }}>No tier data yet</p>
+        <section className="card section-card">
+          <div className="section-card-header">
+            <div>
+              <p className="section-kicker">Escalation queue</p>
+              <h2>Priority Sessions</h2>
+            </div>
+            <Link to="/sessions" className="section-link">Review all sessions</Link>
+          </div>
+          <div className="priority-session-list">
+            {prioritySessions.map(session => (
+              <Link
+                key={session.session_id}
+                to={`/sessions/${session.session_id}`}
+                className="priority-session-row"
+              >
+                <div>
+                  <div className="priority-session-top">
+                    <strong>{workspaceLabel(session.workspace_root)}</strong>
+                    <RiskBadge level={session.current_risk_level} />
+                  </div>
+                  <p className="priority-session-meta">
+                    {session.source_framework} · {session.event_count} events · {session.high_risk_event_count} high-risk
+                  </p>
+                  <p className="priority-session-id mono">{session.session_id}</p>
+                </div>
+                <div className="priority-session-side">
+                  <span className={`activity-pill activity-pill-${activityState(session.last_event_at)}`}>
+                    {formatRelativeTime(session.last_event_at)}
+                  </span>
+                </div>
+              </Link>
+            ))}
+            {prioritySessions.length === 0 && (
+              <div className="empty-inline">No active sessions to prioritize.</div>
             )}
           </div>
-        </div>
+        </section>
       </div>
     </div>
   )

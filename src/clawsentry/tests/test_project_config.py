@@ -44,6 +44,23 @@ class TestPresets:
         with pytest.raises(KeyError):
             from_preset("nonexistent")
 
+    def test_risk_event_action_presets(self):
+        """Higher presets should move runtime detector findings from broadcast toward blocking."""
+        low = from_preset("low")
+        medium = from_preset("medium")
+        high = from_preset("high")
+        strict = from_preset("strict")
+
+        assert low.trajectory_alert_action == "broadcast"
+        assert medium.trajectory_alert_action == "broadcast"
+        assert high.trajectory_alert_action == "defer"
+        assert strict.trajectory_alert_action == "block"
+
+        assert low.post_action_finding_action == "broadcast"
+        assert medium.post_action_finding_action == "broadcast"
+        assert high.post_action_finding_action == "defer"
+        assert strict.post_action_finding_action == "block"
+
 
 class TestProjectConfig:
     """Test .clawsentry.toml loading."""

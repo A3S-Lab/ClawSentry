@@ -6,6 +6,30 @@
 
 ---
 
+## [0.3.8] — 2026-04-09
+
+### 改进
+
+- **Web UI 升级为 Security Console** — Dashboard / Sessions / Session Detail 重新围绕 `framework -> workspace -> session` 三层信息组织，支持在单一监控视图中区分同一框架下的多个工作空间与多个 session，也能同时查看多框架并行运行时的风险态势。
+- **会话报表补充工作空间上下文** — `/report/sessions` 与 `/report/session/{id}/risk` 现在暴露 `workspace_root`、`transcript_path`、`agent_id`、`source_framework`、`caller_adapter` 等字段，Web UI 与 API 使用者都可以直接定位“哪个框架、哪个工作空间、哪个 session”。
+- **会话详情可读性增强** — 会话详情页明确展示 workspace、transcript、风险构成、时间线与 replay，减少仅凭 session_id 理解上下文的成本。
+
+### 文档
+
+- **在线文档重写 Web UI 说明** — `site-docs/dashboard/index.md` 现在先解释 Web UI 的使用模型，再解释页面职责，明确 Dashboard / Sessions / Session Detail / Alerts / DEFER Panel 各自回答什么问题。
+- **快速开始补充 Web UI 导读** — `site-docs/getting-started/quickstart.md` 新增“第一次打开 Web UI 先看什么”的说明，帮助用户用正确的视角理解监控台。
+- **报表 API 文档对齐新字段** — `site-docs/api/reporting.md` 更新会话列表与会话风险详情的响应示例，补充 `workspace_root` / `transcript_path` 等字段说明。
+- **进度文档同步收口** — `docs/plans/2026-04-09-issue-followups-ux-risk-l3-evolution.md` 已更新为包含本轮 Web UI 重构、浏览器验收与后续发布建议。
+
+### 验证
+
+- Python 回归：完整测试 `2295 passed, 3 skipped`；Web UI 相关回归 `126 passed`
+- Web UI 生产构建：PASS
+- `mkdocs build --strict`：PASS
+- 实际浏览器验收：PASS（本地 `/ui?token=...`，覆盖 Dashboard / Sessions / Session Detail / 实时 feed / mobile viewport）
+
+---
+
 ## [0.3.7] — 2026-04-08
 
 ### 改进
@@ -649,6 +673,7 @@
 - 测试通过时间 ~6.5s
 
 [0.3.6]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.6
+[0.3.8]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.8
 [0.3.5]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.5
 [0.3.4]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.4
 [0.3.3]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.3

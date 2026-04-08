@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -18,13 +19,34 @@ class ReadOnlyToolkit:
     MAX_TRAJECTORY_EVENTS = 500
 
     def __init__(self, workspace_root: Path, trajectory_store: Any) -> None:
-        self._workspace_root = workspace_root.resolve()
+        self._default_workspace_root = workspace_root.resolve()
+        self._workspace_root_ctx: ContextVar[Path] = ContextVar(
+            "clawsentry_review_toolkit_workspace_root",
+            default=self._default_workspace_root,
+        )
         self._trajectory_store = trajectory_store
         self._calls_remaining = self.MAX_TOOL_CALLS
 
     @property
     def calls_remaining(self) -> int:
         return self._calls_remaining
+
+    @property
+    def workspace_root(self) -> Path:
+        return self._workspace_root_ctx.get()
+
+    @property
+    def default_workspace_root(self) -> Path:
+        return self._default_workspace_root
+
+    def set_workspace_root(self, workspace_root: Path) -> None:
+        self._workspace_root_ctx.set(workspace_root.resolve())
+
+    def fork(self, workspace_root: Path | None = None) -> "ReadOnlyToolkit":
+        return ReadOnlyToolkit(
+            workspace_root or self._default_workspace_root,
+            self._trajectory_store,
+        )
 
     def reset_budget(self) -> None:
         self._calls_remaining = self.MAX_TOOL_CALLS
@@ -38,9 +60,10 @@ class ReadOnlyToolkit:
 
     def _safe_path(self, relative_path: str) -> Path:
         clean = relative_path.lstrip("/")
-        target = (self._workspace_root / clean).resolve()
+        workspace_root = self.workspace_root
+        target = (workspace_root / clean).resolve()
         try:
-            target.relative_to(self._workspace_root)
+            target.relative_to(workspace_root)
         except ValueError as exc:
             raise ValueError(f"Path '{relative_path}' escapes workspace_root") from exc
         return target
@@ -81,7 +104,8 @@ class ReadOnlyToolkit:
         except re.error as exc:
             return [{"error": f"Invalid regex: {exc}"}]
         results: list[dict[str, Any]] = []
-        for path in sorted(self._workspace_root.glob(glob)):
+        workspace_root = self.workspace_root
+        for path in sorted(workspace_root.glob(glob)):
             if not path.is_file() or len(results) >= max_results:
                 continue
             try:
@@ -91,7 +115,7 @@ class ReadOnlyToolkit:
                     if compiled.search(line):
                         results.append(
                             {
-                                "file": str(path.relative_to(self._workspace_root)),
+                                "file": str(path.relative_to(workspace_root)),
                                 "line": lineno,
                                 "content": line.rstrip(),
                             }
@@ -111,7 +135,7 @@ class ReadOnlyToolkit:
                 "git",
                 "diff",
                 ref,
-                cwd=str(self._workspace_root),
+                cwd=str(self.workspace_root),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -129,8 +153,9 @@ class ReadOnlyToolkit:
             target = self._safe_path(relative_path)
             if not target.is_dir():
                 return [f"[error: '{relative_path}' is not a directory]"]
+            workspace_root = self.workspace_root
             return [
-                str(entry.relative_to(self._workspace_root)) + ("/" if entry.is_dir() else "")
+                str(entry.relative_to(workspace_root)) + ("/" if entry.is_dir() else "")
                 for entry in sorted(target.iterdir())
             ]
         except (ValueError, OSError) as exc:

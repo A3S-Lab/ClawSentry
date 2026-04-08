@@ -27,6 +27,8 @@ export interface SessionSummary {
   agent_id: string
   source_framework: string
   caller_adapter: string
+  workspace_root: string
+  transcript_path: string
   current_risk_level: RiskLevel
   cumulative_score: number
   event_count: number
@@ -37,9 +39,19 @@ export interface SessionSummary {
 }
 
 export interface SessionRisk {
+  session_id: string
+  agent_id: string
+  source_framework: string
+  caller_adapter: string
+  workspace_root: string
+  transcript_path: string
   current_risk_level: RiskLevel
   cumulative_score: number
   dimensions_latest: { d1: number; d2: number; d3: number; d4: number; d5: number }
+  event_count: number
+  high_risk_event_count: number
+  first_event_at: string
+  last_event_at: string
   risk_timeline: Array<{
     event_id: string
     occurred_at: string
@@ -106,3 +118,88 @@ export interface SSEAlertEvent {
   message: string
   timestamp: string
 }
+
+export type SSEPostActionFindingEvent = {
+  event_id: string
+  session_id: string
+  source_framework: string
+  tier: 'warn' | 'escalate' | 'emergency'
+  patterns_matched: string[]
+  score: number
+  handling: 'broadcast' | 'defer' | 'block'
+  timestamp: string
+}
+
+export type SSETrajectoryAlertEvent = {
+  session_id: string
+  sequence_id: string
+  risk_level: RiskLevel
+  matched_event_ids: string[]
+  reason: string
+  handling: 'broadcast' | 'defer' | 'block'
+  timestamp: string
+}
+
+export type SSEPatternCandidateEvent = {
+  pattern_id: string
+  session_id: string
+  source_framework: string
+  status: 'candidate'
+  timestamp: string
+}
+
+export type SSEPatternEvolvedEvent = {
+  pattern_id: string
+  action: string
+  result: string
+  timestamp: string
+}
+
+export type SSEDeferPendingEvent = {
+  session_id: string
+  approval_id: string
+  tool_name: string
+  command: string
+  reason: string
+  timeout_s: number
+  timestamp: string
+}
+
+export type SSEDeferResolvedEvent = {
+  session_id: string
+  approval_id: string
+  resolved_decision: 'allow' | 'allow-once' | 'block'
+  resolved_reason: string
+  timestamp: string
+}
+
+export type SSESessionEnforcementChangeEvent = {
+  session_id: string
+  state: 'enforced' | 'released'
+  action: 'defer' | 'block' | 'l3_require' | null
+  high_risk_count?: number
+  reason?: string
+  timestamp: string
+}
+
+export type RuntimeEventType =
+  | 'decision'
+  | 'alert'
+  | 'trajectory_alert'
+  | 'post_action_finding'
+  | 'pattern_candidate'
+  | 'pattern_evolved'
+  | 'defer_pending'
+  | 'defer_resolved'
+  | 'session_enforcement_change'
+
+export type SSERuntimeEvent =
+  | (SSEDecisionEvent & { type: 'decision' })
+  | (SSEAlertEvent & { type: 'alert' })
+  | (SSEPostActionFindingEvent & { type: 'post_action_finding' })
+  | (SSETrajectoryAlertEvent & { type: 'trajectory_alert' })
+  | (SSEPatternCandidateEvent & { type: 'pattern_candidate' })
+  | (SSEPatternEvolvedEvent & { type: 'pattern_evolved' })
+  | (SSEDeferPendingEvent & { type: 'defer_pending' })
+  | (SSEDeferResolvedEvent & { type: 'defer_resolved' })
+  | (SSESessionEnforcementChangeEvent & { type: 'session_enforcement_change' })

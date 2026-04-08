@@ -20,6 +20,7 @@ import json
 import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 from .l3_trigger import L3TriggerPolicy
@@ -62,6 +63,7 @@ class AgentAnalyzer:
         trigger_policy: Optional[L3TriggerPolicy] = None,
         config: Optional[AgentAnalyzerConfig] = None,
         trajectory_store: Any = None,
+        session_registry: Any = None,
     ) -> None:
         self._provider = provider
         self._toolkit = toolkit
@@ -69,6 +71,7 @@ class AgentAnalyzer:
         self._trigger_policy = trigger_policy or L3TriggerPolicy()
         self._config = config or AgentAnalyzerConfig()
         self._trajectory_store = trajectory_store
+        self._session_registry = session_registry
 
     @property
     def analyzer_id(self) -> str:
@@ -108,7 +111,6 @@ class AgentAnalyzer:
         budget_ms: float,
     ) -> L2Result:
         start = time.monotonic()
-        self._toolkit.reset_budget()
 
         # Fetch session risk history for cumulative trigger evaluation
         session_risk_history: list = []
@@ -135,8 +137,14 @@ class AgentAnalyzer:
             )
 
         try:
+            workspace_context = self._workspace_context(event)
+            workspace_root = workspace_context.get("workspace_root")
+            analysis_toolkit = self._toolkit.fork(
+                Path(workspace_root) if workspace_root else None
+            )
+            analysis_toolkit.reset_budget()
             skill = self._skill_registry.select_skill(event, event.risk_hints or [])
-            trajectory = await self._toolkit.read_trajectory(
+            trajectory = await analysis_toolkit.read_trajectory(
                 event.session_id,
                 limit=self._config.initial_trajectory_limit,
             )
@@ -147,11 +155,25 @@ class AgentAnalyzer:
 
             if self._config.enable_multi_turn:
                 return await self._run_multi_turn(
-                    event, context, l1_snapshot, skill, trajectory, effective_budget, start
+                    analysis_toolkit,
+                    event,
+                    context,
+                    l1_snapshot,
+                    skill,
+                    trajectory,
+                    workspace_context,
+                    effective_budget,
+                    start,
                 )
             else:
                 return await self._run_single_turn(
-                    event, l1_snapshot, skill, trajectory, effective_budget, start
+                    event,
+                    l1_snapshot,
+                    skill,
+                    trajectory,
+                    workspace_context,
+                    effective_budget,
+                    start,
                 )
         except (Exception, asyncio.CancelledError):
             result = self._degraded(
@@ -190,10 +212,13 @@ class AgentAnalyzer:
         l1_snapshot: RiskSnapshot,
         skill: ReviewSkill,
         trajectory: list[dict],
+        workspace_context: dict[str, Any],
         effective_budget: float,
         start: float,
     ) -> L2Result:
-        prompt = self._build_initial_prompt(event, l1_snapshot, skill, trajectory)
+        prompt = self._build_initial_prompt(
+            event, l1_snapshot, skill, trajectory, workspace_context
+        )
 
         llm_start = time.monotonic()
         raw = await asyncio.wait_for(
@@ -279,11 +304,13 @@ class AgentAnalyzer:
 
     async def _run_multi_turn(
         self,
+        toolkit: ReadOnlyToolkit,
         event: CanonicalEvent,
         context: Optional[DecisionContext],
         l1_snapshot: RiskSnapshot,
         skill: ReviewSkill,
         trajectory: list[dict],
+        workspace_context: dict[str, Any],
         effective_budget: float,
         start: float,
     ) -> L2Result:
@@ -291,7 +318,13 @@ class AgentAnalyzer:
         messages: list[dict[str, str]] = [
             {
                 "role": "user",
-                "content": self._build_initial_prompt(event, l1_snapshot, skill, trajectory),
+                "content": self._build_initial_prompt(
+                    event,
+                    l1_snapshot,
+                    skill,
+                    trajectory,
+                    workspace_context,
+                ),
             }
         ]
 
@@ -404,7 +437,7 @@ class AgentAnalyzer:
 
             # Execute the toolkit call
             tool_start = time.monotonic()
-            tool_result = await self._execute_tool(tool_name, tool_args)
+            tool_result = await self._execute_tool(toolkit, tool_name, tool_args)
             tool_latency = (time.monotonic() - tool_start) * 1000
             turn_counter += 1
             tool_result_str = (
@@ -429,9 +462,14 @@ class AgentAnalyzer:
             degradation_reason="L3 max reasoning turns exceeded",
         )
 
-    async def _execute_tool(self, tool_name: str, tool_args: dict[str, Any]) -> Any:
+    async def _execute_tool(
+        self,
+        toolkit: ReadOnlyToolkit,
+        tool_name: str,
+        tool_args: dict[str, Any],
+    ) -> Any:
         try:
-            method = getattr(self._toolkit, tool_name)
+            method = getattr(toolkit, tool_name)
             return await method(**tool_args)
         except ToolCallBudgetExhausted:
             raise
@@ -442,12 +480,39 @@ class AgentAnalyzer:
     # Prompt builders
     # ------------------------------------------------------------------
 
+    def _workspace_context(self, event: CanonicalEvent) -> dict[str, Any]:
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        workspace_root = str(
+            payload.get("cwd")
+            or payload.get("working_directory")
+            or payload.get("workspace_root")
+            or ""
+        )
+        transcript_path = str(payload.get("transcript_path") or "")
+        if (not workspace_root or not transcript_path) and self._session_registry is not None:
+            try:
+                session_stats = self._session_registry.get_session_stats(event.session_id)
+            except Exception:
+                session_stats = {}
+            if not workspace_root:
+                workspace_root = str(session_stats.get("workspace_root") or "")
+            if not transcript_path:
+                transcript_path = str(session_stats.get("transcript_path") or "")
+        return {
+            "session_id": event.session_id,
+            "agent_id": event.agent_id,
+            "source_framework": event.source_framework,
+            "workspace_root": workspace_root,
+            "transcript_path": transcript_path,
+        }
+
     def _build_initial_prompt(
         self,
         event: CanonicalEvent,
         l1_snapshot: RiskSnapshot,
         skill: ReviewSkill,
         trajectory: list[dict],
+        workspace_context: dict[str, Any],
     ) -> str:
         trajectory_summary = [
             {
@@ -466,6 +531,7 @@ class AgentAnalyzer:
                 "evaluation_criteria": skill.evaluation_criteria,
             },
             "event": event.model_dump(mode="json"),
+            "workspace_context": workspace_context,
             "l1_snapshot": l1_snapshot.model_dump(mode="json"),
             "trajectory_summary": trajectory_summary,
             "constraints": {

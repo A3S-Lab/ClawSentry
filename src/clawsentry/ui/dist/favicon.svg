@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="clawsentry-favicon-gradient" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A78BFA"/>
+      <stop offset="1" stop-color="#60A5FA"/>
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="52" height="52" rx="14" fill="#09090B"/>
+  <path
+    d="M32 14L45 20V30C45 39.2 39.1 47.4 32 50C24.9 47.4 19 39.2 19 30V20L32 14Z"
+    fill="url(#clawsentry-favicon-gradient)"
+  />
+  <path
+    d="M32 23L36.8 27.8L32 32.6L27.2 27.8L32 23ZM23 32.6L27.8 27.8L32.6 32.6L27.8 37.4L23 32.6ZM36.2 32.6L41 37.4L36.2 42.2L31.4 37.4L36.2 32.6Z"
+    fill="#09090B"
+    opacity="0.92"
+  />
+</svg>

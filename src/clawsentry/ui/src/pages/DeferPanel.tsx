@@ -5,11 +5,19 @@ import { connectSSE } from '../api/sse'
 import { RiskBadge } from '../components/badges'
 import CountdownTimer from '../components/CountdownTimer'
 import EmptyState from '../components/EmptyState'
-import type { SSEDecisionEvent } from '../api/types'
+import type { SSEDeferPendingEvent, SSEDeferResolvedEvent, RiskLevel } from '../api/types'
 
 type DeferStatus = 'pending' | 'allowed' | 'denied' | 'expired'
 
-interface DeferItem extends SSEDecisionEvent {
+interface DeferItem {
+  approval_id: string
+  session_id: string
+  tool_name: string
+  command: string
+  reason: string
+  timestamp: string
+  expires_at?: number
+  risk_level?: RiskLevel
   status: DeferStatus
 }
 
@@ -18,16 +26,41 @@ export default function DeferPanel() {
   const [resolveAvailable, setResolveAvailable] = useState(true)
 
   useEffect(() => {
-    const es = connectSSE(['decision'])
-    es.addEventListener('decision', (e: MessageEvent) => {
+    const es = connectSSE(['defer_pending', 'defer_resolved'])
+    es.addEventListener('defer_pending', (e: MessageEvent) => {
       try {
-        const data: SSEDecisionEvent = JSON.parse(e.data)
-        if (data.decision === 'defer' && data.approval_id) {
-          setItems(prev => {
-            if (prev.some(item => item.approval_id === data.approval_id)) return prev
-            return [{ ...data, status: 'pending' as DeferStatus }, ...prev]
-          })
-        }
+        const data: SSEDeferPendingEvent = JSON.parse(e.data)
+        setItems(prev => {
+          if (prev.some(item => item.approval_id === data.approval_id)) return prev
+          const expiresAt = data.timeout_s > 0
+            ? (Date.parse(data.timestamp) / 1000) + data.timeout_s
+            : undefined
+          return [{
+            approval_id: data.approval_id,
+            session_id: data.session_id,
+            tool_name: data.tool_name,
+            command: data.command,
+            reason: data.reason,
+            timestamp: data.timestamp,
+            expires_at: expiresAt,
+            status: 'pending',
+          }, ...prev]
+        })
+      } catch { /* ignore */ }
+    })
+    es.addEventListener('defer_resolved', (e: MessageEvent) => {
+      try {
+        const data: SSEDeferResolvedEvent = JSON.parse(e.data)
+        setItems(prev => prev.map(item =>
+          item.approval_id === data.approval_id
+            ? {
+                ...item,
+                status: data.resolved_decision === 'block' ? 'denied' : 'allowed',
+                reason: data.resolved_reason || item.reason,
+                timestamp: data.timestamp,
+              }
+            : item
+        ))
       } catch { /* ignore */ }
     })
     return () => es.close()
@@ -106,7 +139,7 @@ export default function DeferPanel() {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                         <span className="mono" style={{ fontSize: '0.88rem', fontWeight: 600 }}>{item.tool_name}</span>
-                        <RiskBadge level={item.risk_level} />
+                        {item.risk_level && <RiskBadge level={item.risk_level} />}
                       </div>
                       <div className="cmd-snippet" style={{ maxWidth: '100%', marginBottom: item.reason ? 6 : 0 }}>
                         {item.command || '—'}

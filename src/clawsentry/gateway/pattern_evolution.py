@@ -475,3 +475,14 @@ class PatternEvolutionManager:
             }
             for p in self.store.all_patterns
         ]
+
+    def status(self) -> dict[str, Any]:
+        """Return operator-facing status for troubleshooting evolution flow."""
+        patterns = self.list_patterns()
+        return {
+            "enabled": self._enabled,
+            "store_path": self._store_path,
+            "count": len(patterns),
+            "active_count": sum(1 for p in patterns if p.get("status") in {"experimental", "stable"}),
+            "candidate_count": sum(1 for p in patterns if p.get("status") == "candidate"),
+        }

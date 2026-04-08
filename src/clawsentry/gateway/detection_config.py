@@ -52,6 +52,8 @@ class DetectionConfig:
     # --- Trajectory analyzer ---
     trajectory_max_events: int = 50
     trajectory_max_sessions: int = 10_000
+    trajectory_alert_action: str = "broadcast"  # "broadcast", "defer", or "block"
+    post_action_finding_action: str = "broadcast"  # "broadcast", "defer", or "block"
 
     # --- E-8: External content safety ---
     external_content_d6_boost: float = 0.3
@@ -111,6 +113,14 @@ class DetectionConfig:
                 self.defer_timeout_action,
             )
             object.__setattr__(self, "defer_timeout_action", "block")
+        for field_name in ("trajectory_alert_action", "post_action_finding_action"):
+            if getattr(self, field_name) not in ("broadcast", "defer", "block"):
+                logger.warning(
+                    "Invalid %s=%r, falling back to 'broadcast'",
+                    field_name,
+                    getattr(self, field_name),
+                )
+                object.__setattr__(self, field_name, "broadcast")
         if self.defer_timeout_s <= 0:
             raise ValueError(f"defer_timeout_s must be > 0, got {self.defer_timeout_s}")
         if self.llm_daily_budget_usd < 0:
@@ -145,6 +155,8 @@ _ENV_MAP: list[tuple[str, str, type]] = [
     ("CS_POST_ACTION_MONITOR", "post_action_monitor", float),
     ("CS_TRAJECTORY_MAX_EVENTS", "trajectory_max_events", int),
     ("CS_TRAJECTORY_MAX_SESSIONS", "trajectory_max_sessions", int),
+    ("CS_TRAJECTORY_ALERT_ACTION", "trajectory_alert_action", str),
+    ("CS_POST_ACTION_FINDING_ACTION", "post_action_finding_action", str),
     ("CS_EVOLVED_PATTERNS_PATH", "evolved_patterns_path", str),
     ("CS_EXTERNAL_CONTENT_D6_BOOST", "external_content_d6_boost", float),
     ("CS_EXTERNAL_CONTENT_POST_ACTION_MULTIPLIER", "external_content_post_action_multiplier", float),
@@ -238,6 +250,8 @@ PRESETS: dict[str, dict[str, object]] = {
         "post_action_emergency": 0.8,
         "post_action_escalate": 0.5,
         "post_action_monitor": 0.2,
+        "trajectory_alert_action": "defer",
+        "post_action_finding_action": "defer",
     },
     "strict": {
         "threshold_critical": 1.3,
@@ -247,6 +261,8 @@ PRESETS: dict[str, dict[str, object]] = {
         "post_action_emergency": 0.7,
         "post_action_escalate": 0.4,
         "post_action_monitor": 0.15,
+        "trajectory_alert_action": "block",
+        "post_action_finding_action": "block",
     },
 }
 

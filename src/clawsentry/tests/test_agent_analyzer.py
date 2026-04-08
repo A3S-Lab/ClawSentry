@@ -169,6 +169,155 @@ def test_mvp_returns_llm_result_when_trigger_matches(tmp_path: Path):
     assert "credential access looks suspicious" in result.reasons
 
 
+def test_l3_prompt_includes_worker_workspace_context(tmp_path: Path):
+    worker_root = tmp_path / "worker-project"
+    worker_root.mkdir()
+    provider = MagicMock()
+    provider.provider_id = "mock-llm"
+    provider.complete = AsyncMock(
+        return_value='{"risk_level": "high", "findings": ["workspace checked"], "confidence": 0.8}'
+    )
+    toolkit = ReadOnlyToolkit(tmp_path, StubTrajectoryStore())
+    registry = SkillRegistry(_skills_dir(tmp_path))
+    analyzer = AgentAnalyzer(
+        provider=provider,
+        toolkit=toolkit,
+        skill_registry=registry,
+        trigger_policy=L3TriggerPolicy(),
+        config=AgentAnalyzerConfig(enable_multi_turn=False, initial_trajectory_limit=5),
+    )
+
+    result = asyncio.run(
+        analyzer.analyze(
+            _evt(
+                tool_name="bash",
+                payload={
+                    "command": "cat token.txt",
+                    "cwd": str(worker_root),
+                    "transcript_path": "/tmp/session.jsonl",
+                },
+                risk_hints=["credential_exfiltration"],
+            ),
+            DecisionContext(session_risk_summary={"l3_escalate": True}),
+            _snap(RiskLevel.MEDIUM),
+            3000,
+        )
+    )
+
+    assert result.target_level == RiskLevel.HIGH
+    assert toolkit.workspace_root == tmp_path.resolve()
+    prompt = provider.complete.await_args.args[1]
+    assert str(worker_root) in prompt
+    assert "/tmp/session.jsonl" in prompt
+    assert "sess-agent-analyzer" in prompt
+    assert "workspace checked" in result.reasons
+
+
+def test_l3_workspace_root_does_not_leak_between_sessions(tmp_path: Path):
+    base_root = tmp_path / "base-project"
+    worker_root = tmp_path / "worker-project"
+    base_root.mkdir()
+    worker_root.mkdir()
+    (base_root / "README.md").write_text("base workspace", encoding="utf-8")
+    (worker_root / "README.md").write_text("worker workspace", encoding="utf-8")
+
+    provider = MagicMock()
+    provider.provider_id = "mock-llm"
+    provider.complete = AsyncMock(
+        side_effect=[
+            '{"risk_level": "medium", "findings": ["worker workspace"], "confidence": 0.7}',
+            '{"risk_level": "medium", "findings": ["base workspace"], "confidence": 0.7}',
+        ]
+    )
+    toolkit = ReadOnlyToolkit(base_root, StubTrajectoryStore())
+    registry = SkillRegistry(_skills_dir(tmp_path))
+    analyzer = AgentAnalyzer(
+        provider=provider,
+        toolkit=toolkit,
+        skill_registry=registry,
+        trigger_policy=L3TriggerPolicy(),
+        config=AgentAnalyzerConfig(enable_multi_turn=False, initial_trajectory_limit=5),
+    )
+
+    first = asyncio.run(
+        analyzer.analyze(
+            _evt(
+                tool_name="bash",
+                payload={"cwd": str(worker_root)},
+                risk_hints=["credential_exfiltration"],
+            ),
+            DecisionContext(session_risk_summary={"l3_escalate": True}),
+            _snap(RiskLevel.MEDIUM),
+            3000,
+        )
+    )
+    second_event = _evt(
+        tool_name="bash",
+        risk_hints=["credential_exfiltration"],
+    ).model_copy(update={"session_id": "sess-agent-analyzer-2"})
+    second = asyncio.run(
+        analyzer.analyze(
+            second_event,
+            DecisionContext(session_risk_summary={"l3_escalate": True}),
+            _snap(RiskLevel.MEDIUM),
+            3000,
+        )
+    )
+
+    assert "worker workspace" in first.reasons
+    assert "base workspace" in second.reasons
+    assert toolkit.workspace_root == base_root.resolve()
+
+
+def test_l3_workspace_context_can_fall_back_to_session_metadata(tmp_path: Path):
+    worker_root = tmp_path / "worker-project"
+    worker_root.mkdir()
+
+    provider = MagicMock()
+    provider.provider_id = "mock-llm"
+    provider.complete = AsyncMock(
+        return_value='{"risk_level": "high", "findings": ["session workspace reused"], "confidence": 0.8}'
+    )
+    toolkit = ReadOnlyToolkit(tmp_path, StubTrajectoryStore())
+    registry = SkillRegistry(_skills_dir(tmp_path))
+
+    class StubSessionRegistry:
+        def get_session_stats(self, session_id: str) -> dict:
+            assert session_id == "sess-agent-analyzer"
+            return {
+                "workspace_root": str(worker_root),
+                "transcript_path": "/tmp/prior-session.jsonl",
+            }
+
+    analyzer = AgentAnalyzer(
+        provider=provider,
+        toolkit=toolkit,
+        skill_registry=registry,
+        trigger_policy=L3TriggerPolicy(),
+        config=AgentAnalyzerConfig(enable_multi_turn=False, initial_trajectory_limit=5),
+        session_registry=StubSessionRegistry(),
+    )
+
+    result = asyncio.run(
+        analyzer.analyze(
+            _evt(
+                tool_name="bash",
+                payload={"command": "cat token.txt"},
+                risk_hints=["credential_exfiltration"],
+            ),
+            DecisionContext(session_risk_summary={"l3_escalate": True}),
+            _snap(RiskLevel.MEDIUM),
+            3000,
+        )
+    )
+
+    assert result.target_level == RiskLevel.HIGH
+    assert toolkit.workspace_root == tmp_path.resolve()
+    prompt = provider.complete.await_args.args[1]
+    assert str(worker_root) in prompt
+    assert "/tmp/prior-session.jsonl" in prompt
+
+
 def test_multi_turn_executes_tool_call_then_final_response(tmp_path: Path):
     # Round 1: LLM requests a tool call
     # Round 2: LLM returns final result after seeing tool output

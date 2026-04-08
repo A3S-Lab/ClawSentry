@@ -1,431 +1,432 @@
 ---
 title: Web 安全仪表板
-description: ClawSentry 内置 Web 仪表板，提供实时安全态势感知与交互式决策审批
+description: ClawSentry Web UI 的使用模型、页面职责、实时数据来源与典型操作路径
 ---
 
 # Web 安全仪表板
 
-ClawSentry 内置了一个 **Web 安全仪表板 (Security Operations Dashboard)**，面向安全运维人员（SOC Analyst）提供实时安全态势感知、会话风险分析、告警管理和交互式 DEFER 决策审批。
+从 `0.3.8` 开始，ClawSentry 的 Web UI 不再只是“展示几张图表”，而是一个更接近安全监控台的 **Security Console**。
 
-仪表板采用深色 SOC 主题设计，视觉风格对标专业安全运营中心，在复杂监控场景下减少视觉疲劳。
+如果你刚打开它却觉得“不知道该看哪里”，先记住一句话：
+
+> **先看 framework，再看 workspace，再看 session。**
+
+这三个层级就是理解整个 Web UI 的钥匙。
+
+## 30 秒先看懂
+
+如果你只想知道“我现在该点哪里”，先按这个顺序：
+
+| 你的场景 | 先看哪里 | 你要回答的问题 |
+|------|------|------|
+| 只用一种框架，但开了很多 workspace / session | `Dashboard` → `Workspace Risk Board` | 先找出哪个 workspace 最危险 |
+| 同时用了多种框架 | `Dashboard` → `Framework Coverage` | 先找出哪个 framework 当前最值得关注 |
+| 已经知道要查某个 session | `Session Detail` | 这个 session 属于哪个 workspace，它为什么危险 |
+
+然后再记住这条固定路径：
+
+```text
+Dashboard -> Sessions -> Session Detail
+```
+
+- `Dashboard` 用来决定先看哪一块
+- `Sessions` 用来区分 framework / workspace / session
+- `Session Detail` 用来解释这个 session 具体发生了什么
 
 ---
 
-## 技术栈
+## 先理解三个层级
 
-| 层级 | 技术 |
-|------|------|
-| 框架 | React 18 + TypeScript |
-| 构建 | Vite |
-| 图表 | recharts |
-| 样式 | 纯 CSS（无 UI 框架），暗色 SOC 主题 |
-| 数据 | REST API + SSE 实时推送 |
-| 源码 | `src/clawsentry/ui/` |
+### 1. Framework
+
+Framework 表示事件来自哪个 Agent 运行时，例如：
+
+- `claude-code`
+- `a3s-code`
+- `openclaw`
+- `codex`
+
+如果你的团队同时用了多种框架，Web UI 会先把它们区分开。
+
+### 2. Workspace
+
+Workspace 表示某个具体的项目目录或工作区，例如：
+
+- `/workspace/repo-alpha`
+- `/workspace/repo-beta`
+- `/home/user/project-x`
+
+同一个 framework 下可能会同时跑很多 workspace。Web UI 会把这些 workspace 聚合出来，这样你能回答：
+
+- 哪个项目现在最危险？
+- 哪个仓库有最多高风险 session？
+- 哪个工作区最近最活跃？
+
+### 3. Session
+
+Session 表示某个 workspace 中的一次具体 Agent 会话。
+
+同一个 workspace 下可能同时存在多个 session，例如：
+
+- 一个 session 在读代码
+- 一个 session 在跑 shell
+- 一个 session 在尝试高危操作
+
+Web UI 的作用不是只告诉你“系统有风险”，而是告诉你：
+
+- **哪个 framework**
+- **哪个 workspace**
+- **哪个 session**
+- **为什么危险**
 
 ---
 
 ## 访问方式
 
-启动 Gateway 后，仪表板在 `/ui` 路径提供服务：
+启动 Gateway 后，Web UI 会挂载在 `/ui`：
 
 ```bash
-# 启动 Gateway（默认端口 8080）
 clawsentry gateway
 ```
 
-然后在浏览器中打开：
+浏览器访问：
 
-```
-http://localhost:8080/ui
+```text
+http://127.0.0.1:8080/ui
 ```
 
-!!! tip "自定义端口"
-    如果 Gateway 使用了自定义端口（通过 `CS_HTTP_PORT` 环境变量），请将 URL 中的 `8080` 替换为实际端口号。
+如果你使用的是推荐的一键启动路径：
+
+```bash
+clawsentry start --framework claude-code
+```
+
+启动输出中通常会直接给出可登录地址：
+
+```text
+http://127.0.0.1:8080/ui?token=...
+```
+
+这条带 `?token=` 的链接是最省事的打开方式。页面会先把 URL 中的 token 写入浏览器会话，再开始请求 `summary` 和 SSE 流，避免出现先 401 再重连的认证竞态。
 
 ---
 
 ## 认证机制
 
-仪表板使用 **Bearer Token 认证**，与 Gateway REST API 共享同一认证体系。
+Web UI 与 Gateway API 共享同一个 Bearer Token。
 
-### 登录流程
+### REST API
 
-1. 在环境变量中设置认证令牌：
-   ```bash
-   export CS_AUTH_TOKEN="your-secure-token-here"
-   ```
-2. 启动 Gateway
-3. 打开仪表板页面，输入令牌进行登录
-4. 令牌存储在浏览器的 `sessionStorage` 中（关闭标签页后自动清除）
+REST 请求通过 Header 发送：
 
-### API 请求认证
-
-所有 REST API 请求通过 HTTP Header 携带令牌：
-
-```
+```text
 Authorization: Bearer <token>
 ```
 
-### SSE 连接认证
+### SSE 实时流
 
-由于浏览器原生 `EventSource` API 不支持自定义 Header，SSE 连接通过 **URL Query 参数**传递令牌：
+浏览器原生 `EventSource` 不支持自定义 Header，因此 SSE 改用 query 参数：
 
-```
+```text
 /report/stream?token=<token>&types=decision,alert
 ```
 
-!!! warning "安全提示"
-    生产环境中务必启用 HTTPS，防止令牌在 URL 中被中间人截获。参见 [生产部署](../operations/deployment.md) 中的 SSL/TLS 配置。
+!!! warning "生产环境建议"
+    生产环境中请启用 HTTPS。因为浏览器对 SSE 使用 query 参数携带 token，未加密链路会增加令牌泄露风险。
 
 ---
 
-## 页面布局
+## 每个页面回答什么问题？
 
-仪表板采用经典 SOC 布局：
+如果你把每个页面都当成“看数据”，就会容易迷路。更有效的方式是把它们当成回答不同问题的工具。
 
-- **左侧栏 (Sidebar)** -- 导航菜单，包含 4 个主要页面的快速跳转
-- **顶部栏 (StatusBar)** -- 全局状态指示器，显示 Gateway 连接状态
-- **主内容区 (Content)** -- 各页面的具体内容
+### Dashboard
 
-导航菜单包含以下入口：
+Dashboard 回答：
 
-| 图标 | 页面 | 路径 | 说明 |
-|------|------|------|------|
-| :material-view-dashboard: | Dashboard | `/` | 主页，实时态势概览 |
-| :material-account-group: | Sessions | `/sessions` | 活跃会话列表与风险分析 |
-| :material-alert: | Alerts | `/alerts` | 告警工作台 |
-| :material-shield-check: | DEFER Panel | `/defer` | 延迟审批交互面板 |
+- **现在哪类 framework 最值得关注？**
+- **哪个 workspace 风险最高？**
+- **哪些 session 应该优先点进去？**
+- **实时流里刚刚发生了什么？**
 
----
+它是值班视角的“入口页”，适合先扫一眼全局态势。
 
-## Dashboard 主页 {#dashboard}
+### Sessions
 
-Dashboard 主页提供 ClawSentry 运行态势的全局概览，是安全运维人员的首选着陆页。
+Sessions 页回答：
 
-### 指标卡片 (Metric Cards)
+- **当前有哪些 framework 正在活跃？**
+- **每个 framework 下面有哪些 workspace？**
+- **同一个 workspace 里有哪些 session？**
+- **哪个 session 是 critical / high / low？**
 
-页面顶部展示 4 个核心指标卡片，每 10 秒自动刷新：
+这是最适合“区分开很多 session”的页面，也是多工作空间、多框架场景下最关键的页面。
 
-| 指标 | 说明 |
-|------|------|
-| **Total Decisions** | 决策总数，反映系统整体吞吐量 |
-| **Block Rate** | 拦截率（Block 数量 / 总决策数），以百分比展示 |
-| **Risk Levels** | 当前出现过的风险等级种类数 |
-| **Sources** | 已接入的 Agent 框架数量（如 a3s-code, openclaw） |
+### Session Detail
 
-### 实时决策流 (Decision Feed)
+Session Detail 回答：
 
-位于页面中部左侧，以实时列表形式展示最近的决策记录。每条记录包含：
+- **这个 session 到底属于哪个 workspace？**
+- **它的 transcript 在哪里？**
+- **风险是由哪些维度抬高的？**
+- **风险变化时间线是什么样的？**
+- **具体都做了哪些决策？**
 
-- 时间戳
-- 决策结果（ALLOW / BLOCK / DEFER / MODIFY）
-- 风险等级（LOW / MEDIUM / HIGH / CRITICAL）
-- 工具名称
-- 决策延迟（毫秒级）
+当你已经确定“要查某个 session”时，再进入这一页。
 
-数据通过 SSE 实时推送，新决策在产生时立即显示在列表顶部，无需手动刷新。
+### Alerts
 
-### 风险分布饼图 (PieChart)
+Alerts 页回答：
 
-位于页面中部右侧，以环形饼图展示决策的风险等级分布：
+- **有哪些告警还没处理？**
+- **哪些告警已经 ACK？**
+- **它们关联的是哪个 session？**
 
-- **绿色** (`#3fb950`) -- LOW
-- **黄色** (`#d29922`) -- MEDIUM
-- **橙色** (`#db6d28`) -- HIGH
-- **红色** (`#f85149`) -- CRITICAL
+### DEFER Panel
 
-每个扇区标注百分比，鼠标悬停显示具体数值。
+DEFER Panel 回答：
 
-### 判决柱状图 (BarChart)
+- **现在有哪些操作在等人工审批？**
+- **我应该 Allow 还是 Deny？**
 
-页面底部并排展示两个柱状图：
-
-**Decisions by Verdict** -- 按判决类型统计：
-
-- Allow（绿色）
-- Block（红色）
-- Defer（黄色）
-- Modify（蓝色）
-
-**Decisions by Source** -- 按来源框架统计，显示各 Agent 框架贡献的事件数量。
+它不是总览页，而是交互审批页。
 
 ---
 
-## Sessions 会话页 {#sessions}
+## 推荐使用顺序
 
-Sessions 页面提供对所有活跃 Agent 会话的监控和深度分析能力。
+### 场景 A：同一种框架，很多 workspace，很多 session
 
-### 会话列表
+例如你只用了 `codex`，但同时在很多仓库开了很多 session。
 
-以表格形式展示所有活跃会话，每 15 秒自动刷新。列包含：
+推荐路径：
 
-| 列名 | 说明 |
-|------|------|
-| **Session ID** | 会话标识符，可点击进入详情视图 |
-| **Agent** | Agent 标识符 |
-| **Risk** | 当前风险等级，以彩色徽章展示 |
-| **Events** | 会话内事件总数 |
-| **Source** | 来源框架（a3s-code / openclaw） |
-| **Last Activity** | 最后活动时间 |
+1. 先看 **Dashboard**
+2. 从 **Workspace Risk Board** 找到最危险的 workspace
+3. 进入 **Sessions** 页，查看该 framework 下该 workspace 的 session 列表
+4. 点击具体 session 进入 **Session Detail**
 
-#### 过滤与排序
+你真正想回答的问题通常不是“系统有多少事件”，而是：
 
-- **风险等级过滤** -- 下拉框选择最低风险等级（Low+ / Medium+ / High+ / Critical）
-- **默认排序** -- 按风险等级降序（`risk_desc`），高风险会话置顶
-- **手动刷新** -- 点击刷新按钮立即更新数据
+- 哪个 repo 最危险？
+- 这个 repo 里是哪一个 session 出问题？
 
-### 会话详情视图 (Session Detail) {#session-detail}
+### 场景 B：多种框架并行使用
 
-点击会话 ID 进入详情页面，提供该会话的完整安全分析视图。
+例如你同时跑了 `claude-code`、`a3s-code`、`codex`。
 
-#### D1-D5 雷达图 (Radar Chart)
+推荐路径：
 
-以雷达图可视化会话最新的五维风险评分：
+1. 先看 **Dashboard → Framework Coverage**
+2. 判断哪一个 framework 当前风险更高
+3. 再进入 **Sessions**，按 framework 分块查看 workspace 和 session
 
-| 维度 | 含义 | 取值范围 |
-|------|------|----------|
-| **D1: Tool Risk** | 工具类型危险性 | 0-3 |
-| **D2: Target Sensitivity** | 目标路径敏感度 | 0-3 |
-| **D3: Data Flow** | 命令模式危险性 | 0-3 |
-| **D4: Frequency** | 上下文风险累积 | 0-2 |
-| **D5: Context** | Agent 信任等级 | 0-2 |
-
-雷达图使用蓝色填充，透明度 20%，直观展示各维度的风险分布形态。
-
-#### 会话元数据
-
-右侧面板展示关键会话指标：
-
-- **Cumulative Score** -- 累积风险评分
-- **Tools Used** -- 会话中使用过的所有工具列表
-- **Risk Hints** -- 出现过的风险提示标签（如 `shell_execution`、`destructive_pattern`）
-- **Tier Distribution** -- L1/L2 决策层级分布
-
-#### 风险曲线 (Risk Curve)
-
-以折线图展示会话风险评分随时间的变化趋势：
-
-- X 轴为时间
-- Y 轴为归一化后的综合评分（0-1 范围）
-- 蓝色折线，关键拐点以圆点标注
-
-通过风险曲线可以快速识别风险骤升的时间节点。
-
-#### 决策时间线 (Decision Timeline)
-
-以时间线形式按时间顺序展示会话内所有决策记录：
-
-- 每条记录包含时间戳、决策结果徽章、风险等级徽章、工具名称、决策原因和延迟
-- 可滚动浏览完整轨迹
-- 最多展示 400px 高度的可滚动区域
+这时 Web UI 的重点不是“一个 session 的细节”，而是**跨框架的统一监控视角**。
 
 ---
 
-## Alerts 告警页 {#alerts}
+## 现在的页面结构
 
-Alerts 页面是一个完整的告警工作台，支持告警查看、过滤、确认和实时推送。
+左侧导航保持 4 个主要入口：
 
-### 告警表格
+| 页面 | 路径 | 适合什么时候看 |
+|------|------|----------------|
+| `Dashboard` | `/ui/` | 刚打开 UI，先看全局 |
+| `Sessions` | `/ui/sessions` | 需要区分 framework / workspace / session |
+| `Alerts` | `/ui/alerts` | 需要处理或确认告警 |
+| `DEFER Panel` | `/ui/defer` | 需要人工审批延迟决策 |
 
-以表格形式展示所有告警，每 30 秒自动刷新。列包含：
+---
 
-| 列名 | 说明 |
-|------|------|
-| **Severity** | 严重程度：`info` / `warning` / `critical` |
-| **Metric** | 触发告警的指标名称 |
-| **Session** | 关联的会话 ID，可点击跳转到会话详情 |
-| **Message** | 告警消息内容 |
-| **Triggered** | 告警触发时间 |
-| **Status** | 状态：OPEN（未确认）或 ACK（已确认） |
-| **操作** | 未确认的告警显示 Acknowledge 按钮 |
+## Dashboard 现在看什么？
 
-### 过滤器
+### 1. 顶部总览
 
-支持两个维度的过滤，可组合使用：
+顶部会告诉你当前整体态势，例如：
 
-- **严重程度过滤** -- 下拉框选择 `Info` / `Warning` / `Critical`
-- **状态过滤** -- 下拉框选择 `Unacknowledged` / `Acknowledged`
+- 追踪中的 session 数量
+- 高风险 session 数量
+- Block rate
+- Gateway uptime / live events
 
-### 确认操作
+### 2. Framework Coverage
 
-点击 **Acknowledge** 按钮将告警标记为已处理。已确认的告警：
+这块告诉你：
 
-- 以 50% 透明度显示，视觉上降低优先级
-- 状态列显示绿色 :material-check-circle: ACK 标记
-- Acknowledge 按钮隐藏
+- 当前有哪些 framework 在活跃
+- 每个 framework 下有多少 workspace
+- 每个 framework 下有多少高风险 session
 
-### SSE 实时推送
+这是“多框架视角”的入口。
 
-告警页面自动建立 SSE 连接，订阅 `alert` 事件类型。当新告警产生时：
+### 3. Workspace Risk Board
 
-- 新告警立即插入到表格顶部
-- 无需手动刷新或轮询
-- 浏览器标签页在后台时也能接收
+这块告诉你：
 
-```typescript
-// SSE 连接示例（前端自动处理）
-const es = connectSSE(['alert'])
-es.addEventListener('alert', (e: MessageEvent) => {
-  const data = JSON.parse(e.data)
-  // 新告警自动添加到列表顶部
-})
+- 哪些 workspace 最值得优先排查
+- 每个 workspace 下有多少 session
+- 哪些 workspace 最近刚刚出现了 critical/high 风险
+
+这是“项目/仓库视角”的入口。
+
+### 4. Priority Sessions
+
+这块告诉你：
+
+- 当前最该点进去看的 session 是哪些
+
+如果你只想快速找到问题 session，这一块最直接。
+
+### 5. Live Activity Feed
+
+这块显示实时事件流，适合看“刚刚发生了什么”。
+
+从 `0.3.8` 开始，feed 会继续保留以下事件可见性：
+
+- `decision`
+- `alert`
+- `trajectory_alert`
+- `post_action_finding`
+- `pattern_candidate`
+- `pattern_evolved`
+- `defer_pending`
+- `defer_resolved`
+- `session_enforcement_change`
+
+---
+
+## Sessions 页现在怎么读？
+
+Sessions 页不再只是一个平铺表格，而是按下面的结构组织：
+
+```text
+Framework
+  └─ Workspace
+       └─ Session
 ```
 
----
+也就是说：
 
-## DEFER Panel 延迟审批页 {#defer-panel}
+- 先看到 framework 概览卡
+- 再看到每个 framework 下的 workspace 分组
+- 最后在 workspace 内看到具体 session
 
-DEFER Panel 是 ClawSentry 最具交互性的页面，允许运维人员在 Web 界面上实时审批或拒绝 DEFER 决策。
+这正是“很多工作空间、很多 session”场景下最重要的改动。
 
-### 工作原理
+### 你会在这里看到什么？
 
-当策略引擎对某个 Agent 操作做出 DEFER 决策时：
+- framework 概览
+- workspace 根目录
+- workspace 内 session 数量
+- 每个 session 的风险等级、事件数、判决分布、最后活动时间
 
-1. 决策通过 SSE 实时推送到 DEFER Panel
-2. 运维人员在倒计时结束前做出 Allow 或 Deny 决定
-3. 决策通过 `POST /ahp/resolve` 代理到 OpenClaw Gateway 执行
+### 适合哪些场景？
 
-### 待处理区域 (Pending)
-
-显示所有等待审批的 DEFER 决策，每条记录包含：
-
-- **工具名称** -- 请求执行的工具
-- **风险等级徽章** -- LOW / MEDIUM / HIGH / CRITICAL
-- **命令内容** -- 具体请求执行的命令，以代码样式展示
-- **决策原因** -- 策略引擎给出的决策理由
-- **倒计时器** -- 显示剩余审批时间
-- **操作按钮**:
-    - **Allow** -- 允许此次操作（绿色按钮）
-    - **Deny** -- 拒绝此次操作（红色按钮）
-
-```
-┌─────────────────────────────────────────────────────────┐
-│  bash          ⚠ MEDIUM                    ⏱ 00:42     │
-│  ┌─────────────────────────────────────────────┐       │
-│  │ rm -rf /tmp/old-cache                       │       │
-│  └─────────────────────────────────────────────┘       │
-│  Medium risk: allowed with audit | D1=2 ...  [Allow] [Deny] │
-└─────────────────────────────────────────────────────────┘
-```
-
-### 已处理区域 (Resolved)
-
-显示已经处理过的决策，每条记录包含：
-
-- 状态徽章：ALLOWED（绿色）/ DENIED（红色）/ EXPIRED（黄色）
-- 工具名称和命令摘要
-- 处理时间
-
-已处理的记录以 50% 透明度显示，降低视觉干扰。
-
-### 倒计时超时处理
-
-如果运维人员未在倒计时结束前做出决定：
-
-- 记录自动标记为 **EXPIRED** 状态
-- 从待处理区域移到已处理区域
-- Agent 端根据框架配置执行超时行为（通常为拒绝）
-
-### 503 降级提示
-
-当 OpenClaw 未连接或不可用时：
-
-- 页面顶部显示黄色警告横幅：*"Resolve not available -- OpenClaw enforcement is not connected"*
-- Allow / Deny 按钮变为禁用状态
-- 运维人员仍可查看 DEFER 决策的详情，但无法执行审批操作
-
-!!! info "关于 DEFER 审批的替代方式"
-    除 Web 仪表板外，你还可以通过 CLI 进行交互式审批：
-    ```bash
-    clawsentry watch --interactive
-    ```
-    CLI 方式支持键盘快捷键 `[A]llow / [D]eny / [S]kip`，适合终端工作流场景。
+- 你需要区分“同名 agent 在不同 repo 里的 session”
+- 你需要判断“是某个 workspace 整体变危险，还是单个 session 出问题”
+- 你需要同时盯多个 framework
 
 ---
 
-## SSE 事件类型
+## Session Detail 页现在怎么读？
 
-仪表板通过 SSE 订阅以下事件类型：
+Session Detail 页现在首先回答“这个 session 是谁”：
 
-| 事件类型 | 订阅页面 | 说明 |
-|----------|----------|------|
-| `decision` | Dashboard, DEFER Panel | 每个决策结果实时广播，包含 reason / command / approval_id / expires_at |
-| `alert` | Alerts | 新告警通知 |
-| `session_start` | Sessions | 新会话开始 |
-| `session_risk_change` | Sessions | 会话风险等级变化 |
-| `session_enforcement_change` | Sessions | 会话执法状态变化（强制 DEFER/BLOCK） |
+- 它属于哪个 workspace
+- transcript 在哪里
+- source framework 是什么
+- caller adapter 是什么
 
-### 连接参数
+然后才回答“它为什么危险”：
 
-SSE 端点支持以下 Query 参数：
+- D1-D5 风险构成
+- 风险时间线
+- replay / decision timeline
+- tools used / risk hints / tier distribution
 
+如果你之前只看到一个 `session_id` 不知道上下文，那么这次改动就是为了解决这个问题。
+
+---
+
+## Web UI 背后的 API 变化
+
+为了支撑 `framework -> workspace -> session` 视图，`0.3.8` 起以下 API 多暴露了会话身份信息：
+
+- `GET /report/sessions`
+- `GET /report/session/{id}/risk`
+
+关键字段包括：
+
+- `source_framework`
+- `workspace_root`
+- `transcript_path`
+- `agent_id`
+- `caller_adapter`
+
+如果你在做二次开发，建议直接用这些字段做分组，而不是只靠 `session_id`。
+
+---
+
+## 实时数据来源
+
+Web UI 使用两类数据源：
+
+- **REST**：拉 summary / sessions / alerts / session detail
+- **SSE**：接收实时事件
+
+典型 SSE 连接形式：
+
+```text
+GET /report/stream?token=<token>&types=decision,alert
 ```
-GET /report/stream?token=<token>&types=decision,alert&session_id=<id>&min_risk=<level>
-```
+
+支持参数：
 
 | 参数 | 说明 |
 |------|------|
-| `token` | 认证令牌（必须，当启用认证时） |
-| `types` | 订阅的事件类型，逗号分隔 |
-| `session_id` | 只接收指定会话的事件 |
-| `min_risk` | 最低风险等级过滤 |
+| `token` | 认证令牌 |
+| `types` | 订阅的事件类型列表 |
+| `session_id` | 只接收某个 session 的事件 |
+| `min_risk` | 风险等级过滤 |
 
 ---
 
-## 前端开发
+## 如果你只记住一条
 
-如果你需要修改仪表板前端代码：
+打开 Web UI 后，不要先问“这些图表是什么意思”，而要先问：
 
-### 源码结构
+1. **哪个 framework 有问题？**
+2. **哪个 workspace 最危险？**
+3. **哪个 session 需要我点进去看？**
 
-```
+这就是当前 Web UI 的设计主线。
+
+---
+
+## 前端开发入口
+
+如果你需要继续修改前端，主要入口仍在：
+
+```text
 src/clawsentry/ui/
-├── src/
-│   ├── api/
-│   │   ├── client.ts        # API 客户端，认证逻辑
-│   │   ├── sse.ts           # SSE 连接工具
-│   │   └── types.ts         # TypeScript 类型定义
-│   ├── components/
-│   │   ├── Layout.tsx        # 主布局（侧边栏 + 顶栏 + 内容区）
-│   │   ├── StatusBar.tsx     # 顶部状态栏
-│   │   ├── MetricCard.tsx    # 指标卡片组件
-│   │   ├── DecisionFeed.tsx  # 实时决策流组件
-│   │   ├── CountdownTimer.tsx # 倒计时器组件
-│   │   ├── LoginForm.tsx     # 登录表单
-│   │   └── badges.tsx        # 风险/决策徽章组件
-│   ├── hooks/
-│   │   └── useAuth.ts       # 认证状态 Hook
-│   ├── pages/
-│   │   ├── Dashboard.tsx    # 主页
-│   │   ├── Sessions.tsx     # 会话列表
-│   │   ├── SessionDetail.tsx # 会话详情
-│   │   ├── Alerts.tsx       # 告警工作台
-│   │   └── DeferPanel.tsx   # DEFER 审批面板
-│   ├── App.tsx              # 路由配置
-│   └── main.tsx             # 入口文件
-├── package.json
-├── vite.config.ts
-└── dist/                    # 构建产物（已追踪到 Git）
+├── src/api/
+├── src/components/
+├── src/pages/
+├── src/lib/sessionGroups.ts
+├── src/App.tsx
+└── src/styles.css
 ```
 
-### 本地开发
+其中与本轮使用模型最相关的是：
 
-```bash
-cd src/clawsentry/ui
-npm install
-npm run dev
-```
+- `src/pages/Dashboard.tsx`
+- `src/pages/Sessions.tsx`
+- `src/pages/SessionDetail.tsx`
+- `src/lib/sessionGroups.ts`
 
-!!! note "开发模式代理"
-    本地开发时，Vite 开发服务器需要配置代理将 API 请求转发到运行中的 Gateway。
-
-### 构建与打包
-
-构建产物输出到 `dist/` 目录，并通过 `pyproject.toml` 配置包含在 Python 包中：
+本地构建：
 
 ```bash
 cd src/clawsentry/ui
 npm run build
 ```
-
-Gateway 在启动时自动挂载 `ui/dist/` 为静态文件目录，并配置 SPA fallback（所有未匹配的路径返回 `index.html`）。

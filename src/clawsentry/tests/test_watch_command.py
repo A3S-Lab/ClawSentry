@@ -412,6 +412,107 @@ class TestFormatEvent:
         result = format_event(event, color=False, no_emoji=True)
         assert "🚫" not in result
 
+    def test_trajectory_alert_dispatch(self):
+        event = {
+            "type": "trajectory_alert",
+            "session_id": "sess-001",
+            "sequence_id": "seq-exfil",
+            "risk_level": "critical",
+            "matched_event_ids": ["evt-1", "evt-2"],
+            "reason": "read secret then exfiltrate",
+            "timestamp": "2026-03-22T10:30:45Z",
+        }
+        result = format_event(event, color=False)
+        assert "TRAJECTORY" in result
+        assert "seq-exfil" in result
+        assert "critical" in result
+        assert "read secret then exfiltrate" in result
+        assert not result.startswith("{")
+
+    def test_post_action_finding_dispatch(self):
+        event = {
+            "type": "post_action_finding",
+            "session_id": "sess-001",
+            "tier": "emergency",
+            "score": 0.94,
+            "patterns_matched": ["secret_leak", "external_content"],
+            "timestamp": "2026-03-22T10:30:45Z",
+        }
+        result = format_event(event, color=False)
+        assert "POST-ACTION" in result
+        assert "emergency" in result
+        assert "0.94" in result
+        assert "secret_leak" in result
+        assert not result.startswith("{")
+
+    def test_pattern_evolved_dispatch(self):
+        event = {
+            "type": "pattern_evolved",
+            "pattern_id": "EV-ABC123",
+            "result": "promoted_to_experimental",
+            "confirmed": True,
+            "timestamp": "2026-03-22T10:30:45Z",
+        }
+        result = format_event(event, color=False)
+        assert "PATTERN" in result
+        assert "EV-ABC123" in result
+        assert "promoted_to_experimental" in result
+        assert not result.startswith("{")
+
+    def test_pattern_candidate_dispatch(self):
+        event = {
+            "type": "pattern_candidate",
+            "pattern_id": "EV-CANDIDATE",
+            "session_id": "sess-001",
+            "status": "candidate",
+            "source_framework": "test",
+            "timestamp": "2026-03-22T10:30:45Z",
+        }
+        result = format_event(event, color=False)
+        assert "PATTERN CANDIDATE" in result
+        assert "EV-CANDIDATE" in result
+        assert "sess-001" in result
+        assert "candidate" in result
+        assert not result.startswith("{")
+
+    def test_pattern_evolved_dispatch_uses_explicit_label(self):
+        event = {
+            "type": "pattern_evolved",
+            "pattern_id": "EV-ABC123",
+            "result": "promoted_to_experimental",
+            "timestamp": "2026-03-22T10:30:45Z",
+        }
+        result = format_event(event, color=False)
+        assert "PATTERN EVOLVED" in result
+
+    def test_trajectory_alert_compact_mode_is_single_line(self):
+        event = {
+            "type": "trajectory_alert",
+            "session_id": "sess-001",
+            "sequence_id": "seq-exfil",
+            "risk_level": "critical",
+            "handling": "block",
+            "reason": "read secret then exfiltrate",
+            "timestamp": "2026-03-22T10:30:45Z",
+        }
+        result = format_event(event, color=False, compact=True)
+        assert "\n" not in result
+        assert "TRAJECTORY" in result
+        assert "seq-exfil" in result
+
+    def test_pattern_candidate_compact_mode_is_single_line(self):
+        event = {
+            "type": "pattern_candidate",
+            "pattern_id": "EV-CANDIDATE",
+            "session_id": "sess-001",
+            "status": "candidate",
+            "source_framework": "test",
+            "timestamp": "2026-03-22T10:30:45Z",
+        }
+        result = format_event(event, color=False, compact=True)
+        assert "\n" not in result
+        assert "EV-CANDIDATE" in result
+
 
 # ---------------------------------------------------------------------------
 # TestFormatDeferEvents

@@ -91,6 +91,21 @@ _RISK_LEVEL_RANK: dict[str, int] = {"low": 0, "medium": 1, "high": 2, "critical"
 def _risk_rank(risk_level: Optional[str]) -> int:
     return _RISK_LEVEL_RANK.get(str(risk_level or "low").lower(), 0)
 
+
+def _risk_level_from_string(risk_level: str) -> RiskLevel:
+    try:
+        return RiskLevel(str(risk_level or "high").lower())
+    except ValueError:
+        return RiskLevel.HIGH
+
+
+def _enforcement_action_from_config(action: str) -> EnforcementAction:
+    if action == "block":
+        return EnforcementAction.BLOCK
+    if action == "defer":
+        return EnforcementAction.DEFER
+    return EnforcementAction.DEFER
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -306,6 +321,7 @@ class SupervisionGateway:
         source_framework: str | None,
         content_origin: str | None,
         external_multiplier: float,
+        finding_action: str,
         occurred_at: str,
     ) -> None:
         """Run post-action analysis in background, broadcast finding if needed."""
@@ -322,6 +338,22 @@ class SupervisionGateway:
                 ),
             )
             if finding.tier.value != "log_only":
+                handling = finding_action
+                if session_id and handling in ("defer", "block"):
+                    enf = self.session_enforcement.force(
+                        session_id,
+                        action=_enforcement_action_from_config(handling),
+                        high_risk_count=1,
+                    )
+                    self.event_bus.broadcast({
+                        "type": "session_enforcement_change",
+                        "session_id": session_id,
+                        "state": "enforced",
+                        "action": enf.action.value,
+                        "high_risk_count": enf.high_risk_count,
+                        "reason": f"post-action finding {finding.tier.value}",
+                        "timestamp": occurred_at,
+                    })
                 self.event_bus.broadcast({
                     "type": "post_action_finding",
                     "event_id": event_id,
@@ -330,6 +362,7 @@ class SupervisionGateway:
                     "tier": finding.tier.value,
                     "patterns_matched": finding.patterns_matched,
                     "score": finding.score,
+                    "handling": handling,
                     "timestamp": occurred_at,
                 })
         except Exception:
@@ -478,6 +511,58 @@ class SupervisionGateway:
         )
         _sid = str(event_dict.get("session_id") or "")
         previous_risk_level = self.session_registry.get_current_risk(_sid)
+        pending_trajectory_alerts: list[dict[str, Any]] = []
+
+        # --- E-4 Phase 2: Trajectory analysis ---
+        # Run before persistence so configured DEFER/BLOCK handling is recorded
+        # with the decision returned to the caller.
+        try:
+            traj_event = {
+                "session_id": _sid,
+                "event_id": req.event.event_id,
+                "tool_name": req.event.tool_name or "",
+                "occurred_at_ts": _parse_iso_timestamp(
+                    str(event_dict.get("occurred_at") or "")
+                ),
+                "payload": req.event.payload or {},
+            }
+            handling = (project_config or self._detection_config).trajectory_alert_action
+            traj_matches = self.trajectory_analyzer.record(traj_event)
+            for tm in traj_matches:
+                pending_trajectory_alerts.append({
+                    "type": "trajectory_alert",
+                    "session_id": _sid,
+                    "sequence_id": tm.sequence_id,
+                    "risk_level": tm.risk_level,
+                    "matched_event_ids": tm.matched_event_ids,
+                    "reason": tm.reason,
+                    "handling": handling,
+                    "timestamp": str(event_dict.get("occurred_at") or utc_now_iso()),
+                })
+                if (
+                    handling in ("defer", "block")
+                    and req.event.event_type == EventType.PRE_ACTION
+                    and not enforcement_applied
+                    and _risk_rank(tm.risk_level) >= _risk_rank("high")
+                ):
+                    verdict = (
+                        DecisionVerdict.BLOCK
+                        if handling == "block"
+                        else DecisionVerdict.DEFER
+                    )
+                    decision = CanonicalDecision(
+                        decision=verdict,
+                        reason=f"Trajectory alert {tm.sequence_id}: {tm.reason}",
+                        policy_id="trajectory-alert",
+                        risk_level=_risk_level_from_string(tm.risk_level),
+                        decision_source=DecisionSource.POLICY,
+                        final=True,
+                    )
+                    decision_dict = decision.model_dump(mode="json")
+                    snapshot_dict["risk_level"] = decision.risk_level.value
+        except Exception:
+            logger.exception("trajectory analysis failed for event %s", req.event.event_id)
+
         l3_trace = snapshot.l3_trace
         self.trajectory_store.record(
             event=event_dict,
@@ -493,30 +578,8 @@ class SupervisionGateway:
             meta=meta_dict,
         )
 
-        # --- E-4 Phase 2: Trajectory analysis ---
-        try:
-            traj_event = {
-                "session_id": _sid,
-                "event_id": req.event.event_id,
-                "tool_name": req.event.tool_name or "",
-                "occurred_at_ts": _parse_iso_timestamp(
-                    str(event_dict.get("occurred_at") or "")
-                ),
-                "payload": req.event.payload or {},
-            }
-            traj_matches = self.trajectory_analyzer.record(traj_event)
-            for tm in traj_matches:
-                self.event_bus.broadcast({
-                    "type": "trajectory_alert",
-                    "session_id": _sid,
-                    "sequence_id": tm.sequence_id,
-                    "risk_level": tm.risk_level,
-                    "matched_event_ids": tm.matched_event_ids,
-                    "reason": tm.reason,
-                    "timestamp": str(event_dict.get("occurred_at") or utc_now_iso()),
-                })
-        except Exception:
-            logger.exception("trajectory analysis failed for event %s", req.event.event_id)
+        for alert in pending_trajectory_alerts:
+            self.event_bus.broadcast(alert)
 
         # --- A-7: Check if threshold is newly breached ---
         session_id = str(event_dict.get("session_id") or "")
@@ -664,9 +727,10 @@ class SupervisionGateway:
                     tool_name=req.event.tool_name or "unknown",
                     event_id=req.event.event_id,
                     session_id=session_id,
-                    source_framework=req.event.source_framework,
+                    source_framework=str(event_dict.get("source_framework") or "unknown"),
                     content_origin=_pa_origin,
                     external_multiplier=(project_config or self._detection_config).external_content_post_action_multiplier,
+                    finding_action=(project_config or self._detection_config).post_action_finding_action,
                     occurred_at=occurred_at,
                 ))
 
@@ -677,15 +741,24 @@ class SupervisionGateway:
             and decision.risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL)
         ):
             try:
-                self.evolution_manager.extract_candidate(
+                candidate_id = self.evolution_manager.extract_candidate(
                     event_id=req.event.event_id,
                     session_id=str(req.event.session_id or ""),
                     tool_name=req.event.tool_name or "",
                     command=str(req.event.payload.get("command", "")) if req.event.payload else "",
                     risk_level=decision.risk_level,
-                    source_framework=req.event.source_framework or "",
+                    source_framework=str(event_dict.get("source_framework") or "unknown"),
                     reasons=decision.reason.split("; ") if decision.reason else [],
                 )
+                if candidate_id:
+                    self.event_bus.broadcast({
+                        "type": "pattern_candidate",
+                        "pattern_id": candidate_id,
+                        "session_id": session_id,
+                        "source_framework": str(event_dict.get("source_framework") or "unknown"),
+                        "status": "candidate",
+                        "timestamp": occurred_at,
+                    })
             except Exception:
                 logger.warning("evolved pattern extraction failed", exc_info=True)
 
@@ -1206,12 +1279,12 @@ def create_http_app(
                 media_type="application/json",
             )
 
-        event_types = {"decision", "session_risk_change", "session_start", "alert", "session_enforcement_change", "post_action_finding", "trajectory_alert", "pattern_evolved", "defer_pending", "defer_resolved"}
+        event_types = {"decision", "session_risk_change", "session_start", "alert", "session_enforcement_change", "post_action_finding", "trajectory_alert", "pattern_candidate", "pattern_evolved", "defer_pending", "defer_resolved"}
         if types:
             requested_types = {item.strip() for item in types.split(",") if item.strip()}
             if not requested_types or not requested_types.issubset(event_types):
                 return Response(
-                    content=json.dumps({"error": "types must be a comma-separated subset of: decision, session_risk_change, session_start, alert, session_enforcement_change, post_action_finding, trajectory_alert, pattern_evolved, defer_pending, defer_resolved"}),
+                    content=json.dumps({"error": "types must be a comma-separated subset of: decision, session_risk_change, session_start, alert, session_enforcement_change, post_action_finding, trajectory_alert, pattern_candidate, pattern_evolved, defer_pending, defer_resolved"}),
                     status_code=400,
                     media_type="application/json",
                 )
@@ -1453,8 +1526,12 @@ def create_http_app(
         auth_result = await verify_auth(request)
         if isinstance(auth_result, Response):
             return auth_result
+        status = gateway.evolution_manager.status()
         return Response(
-            content=json.dumps({"patterns": gateway.evolution_manager.list_patterns()}),
+            content=json.dumps({
+                **status,
+                "patterns": gateway.evolution_manager.list_patterns(),
+            }),
             media_type="application/json",
         )
 
@@ -1479,13 +1556,13 @@ def create_http_app(
             )
         pattern_id = body.get("pattern_id")
         confirmed = body.get("confirmed")
-        if not pattern_id or confirmed is None:
+        if not pattern_id or not isinstance(confirmed, bool):
             return Response(
                 content=json.dumps({"error": "pattern_id and confirmed (bool) are required"}),
                 status_code=400,
                 media_type="application/json",
             )
-        result = gateway.evolution_manager.confirm(pattern_id, confirmed=bool(confirmed))
+        result = gateway.evolution_manager.confirm(pattern_id, confirmed=confirmed)
         if result == "not_found":
             return Response(
                 content=json.dumps({"error": "pattern not found"}),
@@ -1497,6 +1574,8 @@ def create_http_app(
             "type": "pattern_evolved",
             "pattern_id": pattern_id,
             "action": result,
+            "result": result,
+            "timestamp": utc_now_iso(),
         })
         # Trigger hot-reload so new experimental/stable patterns take effect
         if result in ("promoted_to_experimental", "promoted_to_stable"):
@@ -1620,6 +1699,7 @@ async def run_gateway(
     # Wire LLM analyzer (same pattern as stack.py)
     analyzer = build_analyzer_from_env(
         trajectory_store=gateway.trajectory_store,
+        session_registry=gateway.session_registry,
         patterns_path=detection_config.attack_patterns_path,
         evolved_patterns_path=detection_config.evolved_patterns_path if detection_config.evolving_enabled else None,
         l3_budget_ms=detection_config.l3_budget_ms,
