@@ -20,6 +20,12 @@ def gateway():
     return SupervisionGateway(trajectory_db_path=":memory:")
 
 
+@pytest.fixture(autouse=True)
+def _isolate_auth_env(monkeypatch):
+    """Keep this test module independent from external CS_AUTH_TOKEN state."""
+    monkeypatch.delenv("CS_AUTH_TOKEN", raising=False)
+
+
 @pytest.fixture
 def app(gateway):
     return create_http_app(gateway)
@@ -151,6 +157,53 @@ class TestA3SHttpEndpoint:
                 os.environ.pop("CS_AUTH_TOKEN", None)
             else:
                 os.environ["CS_AUTH_TOKEN"] = old
+
+    async def test_auth_via_bearer_header(self, gateway):
+        import os
+        token = "a3s-auth-header-token-1234567890"
+        old = os.environ.get("CS_AUTH_TOKEN")
+        os.environ["CS_AUTH_TOKEN"] = token
+        try:
+            app = create_http_app(gateway)
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as c:
+                resp = await c.post(
+                    "/ahp/a3s",
+                    json=_handshake_body(),
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert resp.status_code == 200
+        finally:
+            if old is None:
+                os.environ.pop("CS_AUTH_TOKEN", None)
+            else:
+                os.environ["CS_AUTH_TOKEN"] = old
+
+    async def test_auth_via_query_token(self, gateway):
+        import os
+        token = "a3s-auth-query-token-1234567890"
+        old = os.environ.get("CS_AUTH_TOKEN")
+        os.environ["CS_AUTH_TOKEN"] = token
+        try:
+            app = create_http_app(gateway)
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as c:
+                resp = await c.post(
+                    f"/ahp/a3s?token={token}",
+                    json=_handshake_body(),
+                )
+                assert resp.status_code == 200
+        finally:
+            if old is None:
+                os.environ.pop("CS_AUTH_TOKEN", None)
+            else:
+                os.environ["CS_AUTH_TOKEN"] = old
+
+    async def test_payload_too_large_returns_413(self, client):
+        huge_command = "x" * (10 * 1024 * 1024 + 1)
+        body = _event_body(command=huge_command, tool_name="Bash")
+        resp = await client.post("/ahp/a3s", json=body)
+        assert resp.status_code == 413
 
     async def test_trajectory_recorded(self, client, gateway):
         """Events processed via /ahp/a3s are recorded in trajectory store."""

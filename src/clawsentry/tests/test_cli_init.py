@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from clawsentry.cli.initializers.base import InitResult
@@ -146,6 +147,43 @@ class TestA3SCodeInitializer:
         init = A3SCodeInitializer()
         result = init.generate_config(tmp_path, force=True)
         assert len(result.warnings) >= 1
+
+    def test_generate_config_creates_settings_json_with_tokenized_hooks(self, tmp_path):
+        init = A3SCodeInitializer()
+        result = init.generate_config(tmp_path)
+
+        settings_path = tmp_path / ".a3s-code" / "settings.json"
+        assert settings_path.exists()
+        assert settings_path in result.files_created
+
+        settings = json.loads(settings_path.read_text())
+        token = result.env_vars["CS_AUTH_TOKEN"]
+        expected_url = f"http://127.0.0.1:8080/ahp/a3s?token={token}"
+        assert settings["hooks"]["PreToolUse"][0]["url"] == expected_url
+        assert settings["hooks"]["PostToolUse"][0]["url"] == expected_url
+
+    def test_generate_config_reuses_existing_settings_token_when_not_force(self, tmp_path):
+        settings_dir = tmp_path / ".a3s-code"
+        settings_dir.mkdir(parents=True)
+        old_token = "existing-token-from-settings"
+        old_url = f"http://127.0.0.1:8080/ahp/a3s?token={old_token}"
+        (settings_dir / "settings.json").write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PreToolUse": [{"type": "http", "url": old_url}],
+                        "PostToolUse": [{"type": "http", "url": old_url}],
+                    }
+                }
+            )
+        )
+
+        init = A3SCodeInitializer()
+        result = init.generate_config(tmp_path, force=False)
+
+        assert result.env_vars["CS_AUTH_TOKEN"] == old_token
+        env_content = (tmp_path / ".env.clawsentry").read_text()
+        assert f"CS_AUTH_TOKEN={old_token}" in env_content
 
 
 from clawsentry.cli.initializers import FRAMEWORK_INITIALIZERS, get_initializer

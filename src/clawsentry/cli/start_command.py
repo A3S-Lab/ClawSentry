@@ -34,6 +34,26 @@ def _remove_pid_file(path: Path) -> None:
         pass
 
 
+def _read_framework_from_env_file(env_file: Path) -> str | None:
+    """Read CS_FRAMEWORK from .env.clawsentry, if present."""
+    if not env_file.is_file():
+        return None
+    try:
+        for raw_line in env_file.read_text().splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            if key.strip() != "CS_FRAMEWORK":
+                continue
+            fw = value.strip().strip("'\"")
+            if fw in {"openclaw", "a3s-code", "codex", "claude-code"}:
+                return fw
+    except OSError:
+        return None
+    return None
+
+
 def detect_framework(
     *,
     openclaw_home: Path | None = None,
@@ -44,25 +64,21 @@ def detect_framework(
     """Auto-detect which framework is configured.
 
     Returns ``"openclaw"``, ``"a3s-code"``, ``"codex"``, ``"claude-code"``,
-    or ``None``.  OpenClaw takes priority when multiple are present.
+    or ``None``.  Explicit ``CS_FRAMEWORK`` in ``.env.clawsentry`` takes
+    highest priority.
     """
+    env_file = Path.cwd() / ".env.clawsentry"
+    env_framework = _read_framework_from_env_file(env_file)
+    if env_framework:
+        return env_framework
+
     oc = openclaw_home or Path.home() / ".openclaw"
     if (oc / "openclaw.json").is_file():
         return "openclaw"
 
     a3s = a3s_dir or Path.cwd() / ".a3s-code"
-    if a3s.is_dir():
+    if (a3s / "settings.json").is_file():
         return "a3s-code"
-
-    # Codex: check .env.clawsentry for CS_FRAMEWORK=codex
-    env_file = Path.cwd() / ".env.clawsentry"
-    if env_file.is_file():
-        try:
-            for line in env_file.read_text().splitlines():
-                if line.strip() == "CS_FRAMEWORK=codex":
-                    return "codex"
-        except OSError:
-            pass
 
     # Claude Code: check BOTH settings.json and settings.local.json
     effective_claude_home = claude_home or Path.home() / ".claude"

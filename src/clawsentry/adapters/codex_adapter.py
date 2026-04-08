@@ -1,7 +1,7 @@
 """Codex event normalization adapter.
 
-Normalizes Codex tool call events (function_call, function_call_output,
-session_meta, session_end) into CanonicalEvent for ClawSentry Gateway evaluation.
+Normalizes Codex events (function_call, function_call_output,
+agent_message, session_meta, session_end) into CanonicalEvent.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 _HOOK_TYPE_MAP: dict[str, EventType] = {
     "function_call": EventType.PRE_ACTION,
     "function_call_output": EventType.POST_ACTION,
+    "agent_message": EventType.POST_RESPONSE,
     "session_meta": EventType.SESSION,
     "session_end": EventType.SESSION,
 }
@@ -77,6 +78,8 @@ class CodexAdapter:
             subtype = "session:start" if hook_type == "session_meta" else "session:end"
         elif event_type == EventType.PRE_ACTION:
             subtype = "pre_action"
+        elif hook_type == "agent_message":
+            subtype = "agent_message"
         else:
             subtype = "post_action"
 
@@ -121,4 +124,3 @@ class CodexAdapter:
             event_subtype=subtype,
             framework_meta=FrameworkMeta(normalization=norm_meta),
         )
-

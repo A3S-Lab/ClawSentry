@@ -130,6 +130,32 @@ class TestGatewayCore:
         assert rec["meta"]["caller_adapter"] == "openclaw-adapter.v1"
 
     @pytest.mark.asyncio
+    async def test_infers_source_framework_from_caller_adapter_when_missing(self, gw):
+        params = _sync_decision_params(
+            request_id="req-fw-infer-001",
+            context={"caller_adapter": "codex-http"},
+            event={
+                "event_id": "evt-fw-infer-001",
+                "trace_id": "trace-fw-infer-001",
+                "event_type": "pre_action",
+                "session_id": "sess-fw-infer-001",
+                "agent_id": "agent-001",
+                "source_framework": "unknown",
+                "occurred_at": "2026-03-19T12:00:00+00:00",
+                "payload": {"tool": "read_file", "path": "/tmp/readme.txt"},
+                "tool_name": "read_file",
+            },
+        )
+        body = _jsonrpc_request("ahp/sync_decision", params)
+        await gw.handle_jsonrpc(body)
+
+        rec = gw.trajectory_store.records[-1]
+        assert rec["event"]["source_framework"] == "codex"
+
+        stats = gw.session_registry.get_session_stats("sess-fw-infer-001")
+        assert stats["source_framework"] == "codex"
+
+    @pytest.mark.asyncio
     async def test_health(self, gw):
         h = gw.health()
         assert h["status"] == "healthy"

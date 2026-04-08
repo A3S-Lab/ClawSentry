@@ -87,12 +87,13 @@ class TestCodexDetectFramework:
         )
         assert result is None
 
-    def test_a3s_takes_priority_over_codex(self, tmp_path, monkeypatch):
+    def test_explicit_codex_in_env_takes_priority_over_a3s_dir(self, tmp_path, monkeypatch):
         from clawsentry.cli.start_command import detect_framework
 
         # Create both a3s-code dir and codex env
         a3s_dir = tmp_path / ".a3s-code"
         a3s_dir.mkdir()
+        (a3s_dir / "settings.json").write_text("{}")
         env_file = tmp_path / ".env.clawsentry"
         env_file.write_text("CS_FRAMEWORK=codex\n")
         monkeypatch.chdir(tmp_path)
@@ -100,7 +101,7 @@ class TestCodexDetectFramework:
             openclaw_home=tmp_path / "fake_oc",
             a3s_dir=a3s_dir,
         )
-        assert result == "a3s-code"
+        assert result == "codex"
 
 
 class TestCodexInitializerSessionDir:

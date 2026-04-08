@@ -42,6 +42,20 @@ class TestCodexAdapter:
         assert event is not None
         assert event.event_type.value == "post_action"
 
+    def test_normalize_agent_message(self):
+        adapter = CodexAdapter()
+        event = adapter.normalize_hook_event(
+            hook_type="agent_message",
+            payload={
+                "type": "message",
+                "content": [{"type": "output_text", "text": "Running tests now."}],
+            },
+            session_id="codex-sess-5",
+        )
+        assert event is not None
+        assert event.event_type.value == "post_response"
+        assert event.event_subtype == "agent_message"
+
     def test_normalize_session_start(self):
         adapter = CodexAdapter()
         event = adapter.normalize_hook_event(

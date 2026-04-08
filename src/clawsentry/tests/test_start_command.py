@@ -9,6 +9,18 @@ from clawsentry.cli.start_command import detect_framework
 
 
 class TestDetectFramework:
+    def test_explicit_framework_env_takes_priority_over_openclaw(self, tmp_path, monkeypatch):
+        env_file = tmp_path / ".env.clawsentry"
+        env_file.write_text("CS_FRAMEWORK=codex\n")
+        monkeypatch.chdir(tmp_path)
+
+        oc_home = tmp_path / ".openclaw"
+        oc_home.mkdir()
+        (oc_home / "openclaw.json").write_text("{}")
+
+        result = detect_framework(openclaw_home=oc_home)
+        assert result == "codex"
+
     def test_detects_openclaw(self, tmp_path):
         oc_home = tmp_path / ".openclaw"
         oc_home.mkdir()
@@ -19,8 +31,19 @@ class TestDetectFramework:
     def test_detects_a3s_code(self, tmp_path):
         a3s_dir = tmp_path / ".a3s-code"
         a3s_dir.mkdir()
+        (a3s_dir / "settings.json").write_text("{}")
         result = detect_framework(openclaw_home=tmp_path / "nope", a3s_dir=a3s_dir)
         assert result == "a3s-code"
+
+    def test_a3s_dir_without_settings_json_not_detected(self, tmp_path):
+        a3s_dir = tmp_path / ".a3s-code"
+        a3s_dir.mkdir()
+        result = detect_framework(
+            openclaw_home=tmp_path / "nope",
+            a3s_dir=a3s_dir,
+            claude_home=tmp_path / "nope3",
+        )
+        assert result is None
 
     def test_openclaw_takes_priority(self, tmp_path):
         oc_home = tmp_path / ".openclaw"

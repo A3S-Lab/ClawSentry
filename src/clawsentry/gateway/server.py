@@ -122,6 +122,38 @@ def _extract_project_config(
         overrides = {}
     return preset, overrides
 
+
+_ADAPTER_SOURCE_FRAMEWORK_MAP: dict[str, str] = {
+    "a3s-http": "a3s-code",
+    "a3s-uds": "a3s-code",
+    "a3s-harness": "a3s-code",
+    "a3s-adapter.v1": "a3s-code",
+    "a3s-http-adapter.v1": "a3s-code",
+    "codex-http": "codex",
+    "codex-adapter.v1": "codex",
+    "openclaw": "openclaw",
+    "openclaw-adapter.v1": "openclaw",
+    "claude-code": "claude-code",
+    "claude-code-adapter.v1": "claude-code",
+}
+
+
+def _infer_source_framework(
+    source_framework: str | None,
+    caller_adapter: str | None,
+) -> str:
+    """Infer framework from caller_adapter when source framework is missing."""
+    explicit = str(source_framework or "").strip()
+    if explicit and explicit.lower() != "unknown":
+        return explicit
+
+    adapter = str(caller_adapter or "").strip().lower()
+    inferred = _ADAPTER_SOURCE_FRAMEWORK_MAP.get(adapter, "")
+    if inferred:
+        return inferred
+
+    return "unknown"
+
 # ---------------------------------------------------------------------------
 # Authentication
 # ---------------------------------------------------------------------------
@@ -439,6 +471,11 @@ class SupervisionGateway:
                 else "unknown"
             ),
         }
+        # CS-024: Keep stream/session framework consistent for HTTP adapters.
+        event_dict["source_framework"] = _infer_source_framework(
+            event_dict.get("source_framework"),
+            meta_dict.get("caller_adapter"),
+        )
         _sid = str(event_dict.get("session_id") or "")
         previous_risk_level = self.session_registry.get_current_risk(_sid)
         l3_trace = snapshot.l3_trace
@@ -1055,8 +1092,16 @@ def create_http_app(
         rl_result = _check_rate_limit(request)
         if rl_result is not None:
             return rl_result
+
+        body_bytes = await request.body()
+        if len(body_bytes) > 10 * 1024 * 1024:
+            return Response(
+                content=json.dumps({"error": "Payload too large"}),
+                status_code=413,
+                media_type="application/json",
+            )
         try:
-            body = await request.json()
+            body = json.loads(body_bytes.decode("utf-8"))
         except Exception:
             return Response(
                 content=json.dumps({"error": "invalid JSON body"}),

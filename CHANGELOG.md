@@ -6,6 +6,26 @@
 
 ---
 
+## [0.3.5] — 2026-04-08
+
+### 修复
+
+- **a3s-code token 一致性** — `clawsentry init a3s-code` 在非 `--force` 模式下会优先复用已有 `.a3s-code/settings.json` 中的 `?token=`，避免 `.env.clawsentry` 与 settings token 漂移。
+- **a3s/source_framework 兼容性** — 扩展 `source_framework` 适配器别名（含 `.v1` 变体），并为 `/ahp/a3s` 增加 10MB 请求体大小保护（超限返回 413）。
+- **框架自动检测收敛** — `detect_framework` 优先使用显式 `CS_FRAMEWORK`；a3s 自动检测要求 `.a3s-code/settings.json` 存在，降低误判。
+
+### 文档与发布流程
+
+- **双仓库发布边界修正** — `sync-to-public` 明确不再同步 `.github/workflows`，由公开仓库独立维护。
+- **a3s 集成文档对齐实现** — 更新 token 传递、fallback 语义、deadline 默认值、限流变量与 health 示例响应。
+
+### 测试
+
+- 新增/增强 a3s 相关回归测试（init token 复用、source_framework 别名、`/ahp/a3s` 认证与 payload 限制）
+- 测试套件：2224 passed, 2 skipped (~34s)
+
+---
+
 ## [0.3.4] — 2026-04-08
 
 ### 变更（Breaking）
@@ -592,8 +612,7 @@
 - 775 个测试用例，覆盖单元测试 + 集成测试 + E2E 测试
 - 测试通过时间 ~6.5s
 
-[0.3.4]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.4
-[0.3.3]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.3
+[0.3.5]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.5
 [0.3.4]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.4
 [0.3.3]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.3
 [0.3.2]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.2

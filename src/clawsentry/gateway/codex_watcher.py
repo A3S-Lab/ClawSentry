@@ -2,8 +2,8 @@
 
 Codex CLI writes events to JSONL files (one JSON object per line).
 This module parses individual lines, extracting tool-call events
-(function_call, function_call_output) and session events (session_meta),
-and skipping everything else (user messages, agent messages, etc.).
+(function_call, function_call_output), agent message events (message),
+and session events (session_meta), skipping everything else.
 
 ``CodexSessionWatcher`` monitors a Codex session log directory, tailing
 JSONL files and feeding parsed events through a Gateway evaluate function.
@@ -38,6 +38,8 @@ def parse_codex_jsonl_line(
       -> ``("function_call", payload, None)``
     * ``response_item`` with ``payload.type == "function_call_output"``
       -> ``("function_call_output", payload, None)``
+    * ``response_item`` with ``payload.type == "message"``
+      -> ``("agent_message", payload, None)``
     * ``session_meta``
       -> ``("session_meta", payload, payload["id"])``
     * Everything else (``event_msg``, unknown types, malformed lines)
@@ -67,9 +69,12 @@ def parse_codex_jsonl_line(
         session_id = payload.get("id")
         return ("session_meta", payload, session_id)
 
-    # --- response_item (tool calls) -------------------------------------
+    # --- response_item ---------------------------------------------------
     if line_type == "response_item":
         payload_type = payload.get("type")
+        if payload_type == "message":
+            return ("agent_message", payload, None)
+
         if payload_type not in ("function_call", "function_call_output"):
             return None
 

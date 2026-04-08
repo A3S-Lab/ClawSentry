@@ -57,6 +57,31 @@ class TestParseCodexJsonlLine:
         assert payload["output"] == "total 42..."
         assert session_id is None
 
+    def test_response_item_message_parsed(self):
+        """response_item + message -> ("agent_message", payload, None)."""
+        line = json.dumps({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "content": [{"type": "output_text", "text": "I'll run tests now."}],
+            },
+        })
+        result = parse_codex_jsonl_line(line)
+        assert result is not None
+        hook_type, payload, session_id = result
+        assert hook_type == "agent_message"
+        assert payload["type"] == "message"
+        assert session_id is None
+
+    def test_response_item_reasoning_skipped(self):
+        """response_item + reasoning -> None."""
+        line = json.dumps({
+            "type": "response_item",
+            "payload": {"type": "reasoning", "content": "thinking..."},
+        })
+        result = parse_codex_jsonl_line(line)
+        assert result is None
+
     def test_session_meta_event(self):
         """session_meta -> ("session_meta", payload, "sess-abc123")."""
         line = json.dumps({

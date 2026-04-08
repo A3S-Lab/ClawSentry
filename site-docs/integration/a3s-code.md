@@ -52,6 +52,7 @@ clawsentry init a3s-code --auto-detect
 此命令会在当前目录生成：
 
 - **`.env.clawsentry`** — 包含 UDS 路径和认证 Token 的环境变量文件（权限 `600`）
+- **`.a3s-code/settings.json`** — 注入 `PreToolUse`/`PostToolUse` 的 HTTP Hook（默认带 `?token=`）
 
 生成的 `.env.clawsentry` 内容示例：
 
@@ -162,13 +163,13 @@ a3s-code 支持三种方式接入 ClawSentry。推荐使用 SDK Transport 方式
         "PreToolUse": [
           {
             "type": "http",
-            "url": "http://127.0.0.1:8080/ahp/a3s"
+            "url": "http://127.0.0.1:8080/ahp/a3s?token=<CS_AUTH_TOKEN>"
           }
         ],
         "PostToolUse": [
           {
             "type": "http",
-            "url": "http://127.0.0.1:8080/ahp/a3s"
+            "url": "http://127.0.0.1:8080/ahp/a3s?token=<CS_AUTH_TOKEN>"
           }
         ]
       }
@@ -227,7 +228,7 @@ sequenceDiagram
 ```bash
 clawsentry-harness \
   --uds-path /tmp/clawsentry.sock \
-  --default-deadline-ms 100 \
+  --default-deadline-ms 4500 \
   --max-rpc-retries 1 \
   --retry-backoff-ms 50
 ```
@@ -236,7 +237,7 @@ clawsentry-harness \
     当 Gateway 不可达或超时时，harness 自动降级为本地决策：
 
     - 含 `destructive_pattern` 或 `shell_execution` 风险提示 → **block**
-    - 其他 → **allow**（fail-open 策略）
+    - 其他 `pre_action` → **defer**（等待人工或重试）
 
     此策略确保 a3s-code 不会因 Monitor 故障而完全停摆。
 
@@ -259,7 +260,9 @@ sequenceDiagram
 
 只需设置 a3s-code 的 Hook URL 即可，无需启动独立的 harness 进程。
 
-如果 Gateway 启用了认证（`CS_AUTH_TOKEN` 不为空），a3s-code 的 HTTP Hook 需要携带 `Authorization: Bearer <token>` 头。
+如果 Gateway 启用了认证（`CS_AUTH_TOKEN` 不为空），a3s-code 的 HTTP Hook 可使用任一方式认证：
+- `Authorization: Bearer <token>` 请求头
+- URL 查询参数 `?token=<token>`（初始化器默认采用）
 
 ---
 
@@ -406,7 +409,7 @@ AHP_SSL_KEYFILE=/path/to/key.pem \
 | `CS_AUTH_TOKEN` | *(空)* | Bearer Token 认证（空=禁用） |
 | `CS_UDS_PATH` | `/tmp/clawsentry.sock` | UDS 套接字路径 |
 | `CS_TRAJECTORY_DB_PATH` | `/tmp/clawsentry-trajectory.db` | SQLite 轨迹数据库路径 |
-| `AHP_RATE_LIMIT_PER_MINUTE` | `300` | 每分钟请求速率限制 |
+| `CS_RATE_LIMIT_PER_MINUTE` | `300` | 每分钟请求速率限制 |
 | `AHP_SSL_CERTFILE` | *(空)* | SSL 证书文件路径 |
 | `AHP_SSL_KEYFILE` | *(空)* | SSL 私钥文件路径 |
 
@@ -475,7 +478,7 @@ curl -N http://127.0.0.1:8080/report/stream
 curl http://127.0.0.1:8080/health
 ```
 
-预期响应：`{"status": "ok"}`
+预期响应：`{"status": "healthy"}`
 
 ### 步骤 2: 发送测试握手
 
@@ -608,7 +611,7 @@ curl -X POST http://127.0.0.1:8080/report/session/{session_id}/enforcement \
     这表示 Gateway 尚未完成初始化或速率限制已触发。
 
     1. 等待 Gateway 完全启动后再发送请求
-    2. 检查速率限制配置：`echo $AHP_RATE_LIMIT_PER_MINUTE`（默认 300/分钟）
+    2. 检查速率限制配置：`echo $CS_RATE_LIMIT_PER_MINUTE`（默认 300/分钟）
 
 ---
 

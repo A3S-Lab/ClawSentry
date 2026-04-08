@@ -76,7 +76,7 @@ export default function Sessions() {
   // Debounced to avoid hammering the API during bursts.
   useEffect(() => {
     const cleanup = createManagedSSE(
-      ['decision', 'session_start', 'session_end', 'risk_change'],
+      ['decision', 'session_start', 'session_risk_change'],
       {
         onEvent: () => {
           if (debounceRef.current) clearTimeout(debounceRef.current)

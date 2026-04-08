@@ -59,7 +59,7 @@ Press Ctrl+C to gracefully shutdown.
 #### a3s-code
 
 ```bash
-clawsentry init a3s-code --setup   # generate config + patch a3s-code settings
+clawsentry init a3s-code           # generate .env.clawsentry + .a3s-code/settings.json
 clawsentry gateway                 # start gateway (default :8080)
 clawsentry watch                   # tail live decisions in your terminal
 ```
