@@ -20,6 +20,7 @@ from .models import (
     RISK_LEVEL_ORDER,
     CanonicalEvent,
     DecisionContext,
+    DecisionTier,
     RiskLevel,
     RiskSnapshot,
 )
@@ -37,6 +38,7 @@ class L2Result:
     analyzer_id: str = ""
     latency_ms: float = 0.0
     trace: Optional[dict] = None
+    decision_tier: DecisionTier = DecisionTier.L2
 
 
 @runtime_checkable
@@ -270,6 +272,7 @@ class LLMAnalyzer:
                 confidence=0.0,
                 analyzer_id=self.analyzer_id,
                 latency_ms=round(elapsed_ms, 3),
+                decision_tier=DecisionTier.L1,
             )
         except Exception:
             logger.warning("LLM analysis failed; falling back to L1", exc_info=True)
@@ -280,6 +283,7 @@ class LLMAnalyzer:
                 confidence=0.0,
                 analyzer_id=self.analyzer_id,
                 latency_ms=round(elapsed_ms, 3),
+                decision_tier=DecisionTier.L1,
             )
 
     def _build_prompt(
@@ -339,6 +343,7 @@ class LLMAnalyzer:
                 confidence=0.0,
                 analyzer_id=self.analyzer_id,
                 latency_ms=round(elapsed_ms, 3),
+                decision_tier=DecisionTier.L1,
             )
 
 
@@ -378,6 +383,7 @@ class CompositeAnalyzer:
                 confidence=0.0,
                 analyzer_id=self.analyzer_id,
                 latency_ms=round(elapsed_ms, 3),
+                decision_tier=DecisionTier.L1,
             )
 
         # --- Phase 1: Run first analyzer (L2 — fast) ---
@@ -393,6 +399,7 @@ class CompositeAnalyzer:
                 confidence=0.0,
                 analyzer_id=first.analyzer_id,
                 latency_ms=0.0,
+                decision_tier=DecisionTier.L1,
             )
 
         if first_result.trace is not None:
@@ -435,6 +442,7 @@ class CompositeAnalyzer:
                 analyzer_id=self.analyzer_id,
                 latency_ms=round(elapsed_ms, 3),
                 trace=l3_trace,  # CS-015: attach collected trace
+                decision_tier=DecisionTier.L1,
             )
 
         # Pick highest risk level; tie-break by confidence
@@ -449,4 +457,5 @@ class CompositeAnalyzer:
             analyzer_id=best.analyzer_id,
             latency_ms=round(elapsed_ms, 3),
             trace=best.trace or l3_trace,  # CS-015: fallback to collected trace
+            decision_tier=best.decision_tier,
         )

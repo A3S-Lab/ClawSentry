@@ -10,6 +10,7 @@ from clawsentry.gateway.models import (
     CanonicalEvent,
     ClassifiedBy,
     DecisionContext,
+    DecisionTier,
     EventType,
     RiskDimensions,
     RiskLevel,
@@ -166,6 +167,7 @@ def test_mvp_returns_llm_result_when_trigger_matches(tmp_path: Path):
     assert result.target_level == RiskLevel.HIGH
     assert result.confidence == 0.82
     assert result.analyzer_id == "agent-reviewer"
+    assert result.decision_tier == DecisionTier.L3
     assert "credential access looks suspicious" in result.reasons
 
 

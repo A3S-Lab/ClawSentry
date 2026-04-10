@@ -195,9 +195,53 @@ def _extract(archive_path: Path, dest_dir: Path) -> None:
     name = archive_path.name
     if name.endswith(".tar.gz"):
         with tarfile.open(archive_path, "r:gz") as tf:
-            tf.extractall(dest_dir, filter="data")
+            _safe_extract_tar(tf, dest_dir)
     elif name.endswith(".zip"):
         with zipfile.ZipFile(archive_path, "r") as zf:
-            zf.extractall(dest_dir)
+            _safe_extract_zip(zf, dest_dir)
     else:
         raise ValueError(f"Unsupported archive format: {name}")
+
+
+def _safe_extract_tar(tf: tarfile.TarFile, dest_dir: Path) -> None:
+    """Safely extract a tar archive without relying on Python 3.12-only APIs."""
+    if not hasattr(tf, "getmembers"):
+        tf.extractall(dest_dir)
+        return
+
+    members = tf.getmembers()
+    for member in members:
+        _validate_archive_member_name(member.name, dest_dir)
+        if member.issym() or member.islnk():
+            raise ValueError(f"Unsafe archive member: {member.name}")
+        if not (member.isfile() or member.isdir()):
+            raise ValueError(f"Unsafe archive member: {member.name}")
+
+    for member in members:
+        target = dest_dir / member.name
+        if member.isdir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        extracted = tf.extractfile(member)
+        if extracted is None:
+            raise ValueError(f"Unsafe archive member: {member.name}")
+        with extracted, open(target, "wb") as fh:
+            shutil.copyfileobj(extracted, fh)
+        if member.mode:
+            target.chmod(member.mode & 0o777)
+
+
+def _safe_extract_zip(zf: zipfile.ZipFile, dest_dir: Path) -> None:
+    """Safely extract a zip archive with destination confinement."""
+    for member in zf.infolist():
+        _validate_archive_member_name(member.filename, dest_dir)
+    zf.extractall(dest_dir)
+
+
+def _validate_archive_member_name(member_name: str, dest_dir: Path) -> None:
+    target = (dest_dir / member_name).resolve()
+    dest_root = dest_dir.resolve()
+    if os.path.commonpath([str(dest_root), str(target)]) != str(dest_root):
+        raise ValueError(f"Unsafe archive member: {member_name}")

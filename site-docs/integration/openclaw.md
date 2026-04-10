@@ -298,8 +298,10 @@ clawsentry integrations status --json
 - `OpenClaw env`：当前项目 `.env.clawsentry` 是否存在 `OPENCLAW_*` 配置
 - `OpenClaw restore`：`~/.openclaw/` 下是否存在可供 `--restore` 使用的 `.bak` 文件
 - `OpenClaw restore files`：检测到的备份文件路径
+- `framework_readiness.openclaw.checks.openclaw_exec_host_gateway`：`openclaw.json` 是否已经把 `tools.exec.host` 设为 `"gateway"`
+- `framework_readiness.openclaw.checks.exec_approvals_configured`：`exec-approvals.json` 是否已经把 `security="allowlist"` 且 `ask="always"` 配好
 
-如果项目同时启用了 Claude Code 或 Codex，状态命令还会一并显示 Claude hooks 来源文件和 Codex session 目录可达性，便于排查多框架共存场景。
+如果项目同时启用了 Claude Code 或 Codex，状态命令还会一并显示 Claude hooks 来源文件、Codex session 目录可达性，以及统一的 `framework_readiness` verdict。`clawsentry start --frameworks ...` 的启动 banner 会复用同一份 readiness 摘要，所以你可以在启动时直接看到 OpenClaw 侧是否还缺宿主配置。
 
 ---
 

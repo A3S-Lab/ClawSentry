@@ -1,6 +1,6 @@
 # ClawSentry — AHP Supervision Gateway
 
-> **Python 3.12+** | **2298 tests** | Protocol `ahp.1.0`
+> **Python 3.11+** | **2331 tests** | Protocol `ahp.1.0`
 
 **ClawSentry** is the Python reference implementation of AHP (Agent Harness Protocol) — a unified security supervision gateway for multi-agent frameworks. Deployed as a sidecar, it normalizes runtime events from different frameworks (a3s-code, Claude Code, Codex, OpenClaw) into a unified protocol, passes them through a three-layer progressive risk evaluation pipeline, and produces real-time decisions (allow / block / modify / defer) with complete audit trails.
 
@@ -186,13 +186,36 @@ clawsentry watch
 
 ---
 
+## Framework Compatibility
+
+| Framework | Integration mode | Pre-action interception | Post-action observation | Main dependency | Maturity |
+|---------|-------------------|-------------------------|-------------------------|-----------------|----------|
+| `a3s-code` | Explicit SDK transport + `clawsentry-harness` | Yes | Yes | Agent code must wire `SessionOptions.ahp_transport` | High |
+| `openclaw` | WebSocket approvals + webhook receiver | Yes | Yes | `~/.openclaw/` must be configured for gateway exec + callbacks | Medium-high |
+| `codex` | Session JSONL watcher | No | Yes | Session logs must be reachable | Medium |
+| `claude-code` | Host hooks + `clawsentry-harness` | Yes | Yes | `~/.claude/settings.json` hooks must remain installed | Medium |
+
+Operational boundary notes:
+
+- `codex` is an observation path, not a pre-execution interception path.
+- `a3s-code` should be documented as explicit SDK transport wiring, not `.a3s-code/settings.json` auto-loading.
+- `openclaw` and `claude-code` provide strong coverage only when host-side setup remains intact.
+
+For a machine-readable local view of the same boundaries, run
+`clawsentry integrations status --json`.
+The command now also emits per-framework readiness diagnostics with concrete
+next steps, and `clawsentry start` reuses the same summary in its startup
+banner.
+
+---
+
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
 | `clawsentry gateway` | Start Gateway (auto-detects framework, starts WS/Webhook as needed) |
-| `clawsentry start` | Auto-init + Gateway + watch; supports `--frameworks` and explicit `--setup-openclaw` |
-| `clawsentry integrations status` | Inspect enabled frameworks, OpenClaw restore backups, Claude hooks, and Codex session dir reachability |
+| `clawsentry start` | Auto-init + Gateway + watch; supports `--frameworks`, explicit `--setup-openclaw`, and startup readiness summaries |
+| `clawsentry integrations status` | Inspect enabled frameworks, host-side diagnostics, framework capability summaries, and per-framework readiness |
 | `clawsentry watch` | SSE real-time display (`--filter`/`--json`/`--no-color`/`--interactive`) |
 | `clawsentry init <framework>` | Initialize config (`a3s-code`/`claude-code`/`codex`/`openclaw`) |
 | `clawsentry harness` | a3s-code stdio bridge subprocess |
@@ -282,7 +305,7 @@ src/clawsentry/
 |-- ui/                                # Web security dashboard (React SPA)
 |   |-- src/                           # TypeScript source
 |   +-- dist/                          # Pre-built artifacts (shipped with pip)
-+-- tests/                             # Test suite (2298 tests)
++-- tests/                             # Test suite (2331 tests)
 ```
 
 ---
@@ -354,7 +377,7 @@ pip install -e ".[dev]"
 
 # Full suite
 python -m pytest src/clawsentry/tests/ -v --tb=short
-# Expected: 2298 passed, 3 skipped
+# Expected: 2331 passed, 3 skipped
 
 # E2E (requires LLM API key)
 A3S_SDK_E2E=1 python -m pytest src/clawsentry/tests/ -v --tb=short

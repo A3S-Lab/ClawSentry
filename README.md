@@ -18,11 +18,11 @@ AHP (Agent Harness Protocol) reference implementation — a unified security sup
 - **Multi-step attack trajectory detection**: 5 built-in sequences with sliding-window analysis, SSE `trajectory_alert` broadcast
 - **Self-evolving pattern library (E-5)**: auto-extract candidates from high-risk events, CANDIDATE→EXPERIMENTAL→STABLE lifecycle, confidence scoring, REST API feedback loop
 - **Tunable detection pipeline**: `DetectionConfig` frozen dataclass with 20 parameters, all overridable via `CS_` environment variables
-- **Four-framework support**: a3s-code (explicit stdio / HTTP transport) + Claude Code (hooks / harness) + Codex CLI (session log monitoring) + OpenClaw (WebSocket / Webhook)
+- **Four-framework support with explicit boundaries**: a3s-code (explicit SDK transport) + OpenClaw (WS approval + webhook) + Claude Code (host hooks) + Codex CLI (session-log watcher)
 - **Real-time monitoring**: SSE streaming, `clawsentry watch` CLI, React/TypeScript web dashboard
 - **Production security**: Bearer token auth, HMAC webhook signatures, UDS chmod 0o600, SSL/TLS, rate limiting
 - **Session enforcement**: auto-escalate after N high-risk events with configurable cooldown
-- **2298+ tests**, ~34s full suite
+- **2331+ tests**, ~34s full suite
 
 ## Installation
 
@@ -75,8 +75,11 @@ clawsentry integrations status --json
 ```
 
 `integrations status` now reports more than enabled frameworks: it also shows
-OpenClaw backup restore availability, Claude hook source files, and Codex
-session directory reachability.
+OpenClaw backup restore availability, Claude hook source files, Codex
+session directory reachability, a per-framework readiness verdict with next
+steps, and a machine-readable framework capability matrix. The multi-framework
+`start` banner now prints the same readiness summary before it returns or
+begins streaming events.
 
 Disable one framework without disturbing the others:
 
@@ -118,6 +121,23 @@ OpenClaw-side config. To preview or restore those backups:
 clawsentry init openclaw --restore --dry-run
 clawsentry init openclaw --restore
 ```
+
+## Framework Compatibility
+
+| Framework | Integration mode | Pre-action interception | Post-action observation | Main dependency |
+|---|---|---|---|---|
+| `a3s-code` | Explicit SDK transport + `clawsentry-harness` | Yes | Yes | Agent code must wire `SessionOptions.ahp_transport` |
+| `openclaw` | WebSocket approvals + webhook receiver | Yes | Yes | `~/.openclaw/` must be configured for gateway exec + callbacks |
+| `codex` | Session JSONL watcher | No | Yes | Session logs must be reachable |
+| `claude-code` | Host hooks + `clawsentry-harness` | Yes | Yes | `~/.claude/settings.json` hooks must remain installed |
+
+`codex` should be understood as an observation path, not a blocking path. `a3s-code`
+should be understood as explicit transport wiring, not `.a3s-code/settings.json`
+auto-loading. `claude-code` and `openclaw` remain more host-config-dependent than
+`a3s-code`.
+
+For a machine-readable local view of the same boundaries, run
+`clawsentry integrations status --json`.
 
 ## Architecture
 

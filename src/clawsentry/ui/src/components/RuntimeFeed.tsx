@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Activity, Wifi, WifiOff } from 'lucide-react'
 import { createManagedSSE, type SSEStatus } from '../api/sse'
@@ -20,6 +20,17 @@ const RUNTIME_EVENT_TYPES: RuntimeEventType[] = [
   'defer_resolved',
   'session_enforcement_change',
 ]
+
+const HIGH_PRIORITY_EVENT_TYPES: RuntimeEventType[] = [
+  'alert',
+  'trajectory_alert',
+  'post_action_finding',
+  'defer_pending',
+  'defer_resolved',
+  'session_enforcement_change',
+]
+
+const FEED_MAX_EVENTS = 80
 
 const EVENT_LABELS: Record<RuntimeEventType, string> = {
   decision: 'Decision',
@@ -79,6 +90,34 @@ const EVENT_TONES: Record<RuntimeEventType, { color: string; bg: string; border:
     bg: 'rgba(239,68,68,0.12)',
     border: 'rgba(239,68,68,0.2)',
   },
+}
+
+function prependWithCap<T>(items: T[], nextItem: T) {
+  const next = [nextItem, ...items]
+  const dropped = Math.max(0, next.length - FEED_MAX_EVENTS)
+  return {
+    items: next.slice(0, FEED_MAX_EVENTS),
+    dropped,
+  }
+}
+
+function prependManyWithCap<T>(items: T[], pendingItems: T[]) {
+  const next = [...pendingItems, ...items]
+  const dropped = Math.max(0, next.length - FEED_MAX_EVENTS)
+  return {
+    items: next.slice(0, FEED_MAX_EVENTS),
+    dropped,
+  }
+}
+
+function matchesRuntimeFilters(
+  event: SSERuntimeEvent,
+  eventTypeFilter: 'all' | RuntimeEventType,
+  highPriorityOnly: boolean,
+) {
+  const matchesType = eventTypeFilter === 'all' || event.type === eventTypeFilter
+  const matchesPriority = !highPriorityOnly || HIGH_PRIORITY_EVENT_TYPES.includes(event.type)
+  return matchesType && matchesPriority
 }
 
 function TierBadge({ tier }: { tier: string }) {
@@ -309,18 +348,46 @@ function RuntimeSummary({ event }: { event: SSERuntimeEvent }) {
 
 export default function RuntimeFeed() {
   const [events, setEvents] = useState<SSERuntimeEvent[]>([])
+  const [bufferedEvents, setBufferedEvents] = useState<SSERuntimeEvent[]>([])
+  const [bufferedCount, setBufferedCount] = useState(0)
+  const [droppedCount, setDroppedCount] = useState(0)
+  const [paused, setPaused] = useState(false)
+  const [eventTypeFilter, setEventTypeFilter] = useState<'all' | RuntimeEventType>('all')
+  const [highPriorityOnly, setHighPriorityOnly] = useState(false)
   const [sseStatus, setSSEStatus] = useState<SSEStatus>('connecting')
   const [statusDetail, setStatusDetail] = useState<string>()
+  const pausedRef = useRef(false)
+
+  useEffect(() => {
+    pausedRef.current = paused
+  }, [paused])
 
   useEffect(() => {
     const cleanup = createManagedSSE(
       RUNTIME_EVENT_TYPES,
       {
         onEvent: (type, data) => {
-          setEvents(prev => [
-            { ...(data as Record<string, unknown>), type } as SSERuntimeEvent,
-            ...prev,
-          ].slice(0, 80))
+          const nextEvent = { ...(data as Record<string, unknown>), type } as SSERuntimeEvent
+
+          if (pausedRef.current) {
+            setBufferedCount(prev => prev + 1)
+            setBufferedEvents(prev => {
+              const next = prependWithCap(prev, nextEvent)
+              if (next.dropped > 0) {
+                setDroppedCount(count => count + next.dropped)
+              }
+              return next.items
+            })
+            return
+          }
+
+          setEvents(prev => {
+            const next = prependWithCap(prev, nextEvent)
+            if (next.dropped > 0) {
+              setDroppedCount(count => count + next.dropped)
+            }
+            return next.items
+          })
         },
         onStatusChange: (status, detail) => {
           setSSEStatus(status)
@@ -330,6 +397,29 @@ export default function RuntimeFeed() {
     )
     return cleanup
   }, [])
+
+  function togglePause() {
+    if (!paused) {
+      setPaused(true)
+      return
+    }
+
+    if (bufferedEvents.length > 0) {
+      setEvents(prev => {
+        const next = prependManyWithCap(prev, bufferedEvents)
+        if (next.dropped > 0) {
+          setDroppedCount(count => count + next.dropped)
+        }
+        return next.items
+      })
+    }
+
+    setBufferedEvents([])
+    setBufferedCount(0)
+    setPaused(false)
+  }
+
+  const filteredEvents = events.filter(event => matchesRuntimeFilters(event, eventTypeFilter, highPriorityOnly))
 
   return (
     <div className="card" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -341,11 +431,68 @@ export default function RuntimeFeed() {
         )}
         {events.length > 0 && (
           <span className="mono" style={{ marginLeft: 'auto', color: 'var(--color-text-muted)', fontSize: '0.65rem' }}>
-            {events.length} events
+            {filteredEvents.length}/{events.length} events
           </span>
         )}
       </div>
       <ConnectionStatus status={sseStatus} detail={statusDetail} />
+      <div style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 8,
+        padding: '10px 14px',
+        borderBottom: '1px solid var(--color-border)',
+        alignItems: 'center',
+      }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="mono text-muted" style={{ fontSize: '0.68rem' }}>Type</span>
+          <select
+            value={eventTypeFilter}
+            onChange={(event) => setEventTypeFilter(event.target.value as 'all' | RuntimeEventType)}
+            className="input"
+            style={{ width: 'auto', minWidth: 140, padding: '6px 10px', fontSize: '0.72rem' }}
+          >
+            <option value="all">All events</option>
+            {RUNTIME_EVENT_TYPES.map(type => (
+              <option key={type} value={type}>{EVENT_LABELS[type]}</option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          className={`badge ${highPriorityOnly ? 'badge-block' : ''}`}
+          style={{ cursor: 'pointer', background: highPriorityOnly ? 'rgba(239,68,68,0.12)' : 'transparent' }}
+          onClick={() => setHighPriorityOnly(prev => !prev)}
+        >
+          High priority only
+        </button>
+        <button
+          type="button"
+          className={`badge ${paused ? 'badge-defer' : ''}`}
+          style={{ cursor: 'pointer', background: paused ? 'rgba(245,158,11,0.12)' : 'transparent' }}
+          onClick={togglePause}
+        >
+          {paused ? 'Resume feed' : 'Pause feed'}
+        </button>
+      </div>
+      {(bufferedCount > 0 || droppedCount > 0) && (
+        <div style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 10,
+          padding: '8px 14px',
+          borderBottom: '1px solid var(--color-border)',
+          fontSize: '0.7rem',
+          color: 'var(--color-text-secondary)',
+        }}>
+          {bufferedCount > 0 && (
+            <span className="mono">Feed paused · {bufferedCount} buffered while paused</span>
+          )}
+          {droppedCount > 0 && (
+            <span className="mono">{droppedCount} older events hidden by feed cap</span>
+          )}
+        </div>
+      )}
       <div style={{ flex: 1, overflowY: 'auto', maxHeight: 420 }}>
         {events.length === 0 ? (
           <EmptyState
@@ -355,8 +502,14 @@ export default function RuntimeFeed() {
               ? 'Decisions, alerts, enforcement, defer actions, and pattern evolution events will appear here'
               : 'Establishing connection to gateway...'}
           />
+        ) : filteredEvents.length === 0 ? (
+          <EmptyState
+            icon={<Activity size={20} />}
+            title="No events match current filters"
+            subtitle="Adjust the event type filter or disable high priority only to widen the feed."
+          />
         ) : (
-          events.map((event, index) => (
+          filteredEvents.map((event, index) => (
             <div key={`${event.type}-${event.timestamp}-${index}`} className="slide-in" style={{
               padding: '10px 14px',
               borderBottom: '1px solid var(--color-border)',

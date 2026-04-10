@@ -25,7 +25,7 @@ from typing import Any, Optional
 
 from .l3_trigger import L3TriggerPolicy
 from .llm_provider import LLMProvider
-from .models import CanonicalEvent, DecisionContext, RiskLevel, RiskSnapshot
+from .models import CanonicalEvent, DecisionContext, DecisionTier, RiskLevel, RiskSnapshot
 from .review_skills import ReviewSkill, SkillRegistry
 from .review_toolkit import ReadOnlyToolkit, ToolCallBudgetExhausted
 from .semantic_analyzer import L2Result, _max_risk_level
@@ -134,6 +134,7 @@ class AgentAnalyzer:
                 target_level=result.target_level, reasons=result.reasons,
                 confidence=result.confidence, analyzer_id=result.analyzer_id,
                 latency_ms=result.latency_ms, trace=trace,
+                decision_tier=DecisionTier.L1,
             )
 
         try:
@@ -191,6 +192,7 @@ class AgentAnalyzer:
                 target_level=result.target_level, reasons=result.reasons,
                 confidence=result.confidence, analyzer_id=result.analyzer_id,
                 latency_ms=result.latency_ms, trace=trace,
+                decision_tier=DecisionTier.L1,
             )
 
     # ------------------------------------------------------------------
@@ -296,6 +298,7 @@ class AgentAnalyzer:
             target_level=result.target_level, reasons=result.reasons,
             confidence=result.confidence, analyzer_id=result.analyzer_id,
             latency_ms=result.latency_ms, trace=trace,
+            decision_tier=result.decision_tier,
         )
 
     # ------------------------------------------------------------------
@@ -351,6 +354,7 @@ class AgentAnalyzer:
                 target_level=result.target_level, reasons=result.reasons,
                 confidence=result.confidence, analyzer_id=result.analyzer_id,
                 latency_ms=result.latency_ms, trace=trace,
+                decision_tier=result.decision_tier,
             )
 
         for _turn in range(self._config.max_reasoning_turns):
@@ -683,6 +687,7 @@ class AgentAnalyzer:
                 confidence=confidence,
                 analyzer_id=self.analyzer_id,
                 latency_ms=round(elapsed_ms, 3),
+                decision_tier=DecisionTier.L3,
             )
         except Exception:
             return self._degraded(
@@ -698,4 +703,5 @@ class AgentAnalyzer:
             confidence=0.0,
             analyzer_id=self.analyzer_id,
             latency_ms=round(elapsed_ms, 3),
+            decision_tier=DecisionTier.L1,
         )

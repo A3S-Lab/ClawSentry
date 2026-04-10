@@ -91,6 +91,7 @@ class FailureClass(str, enum.Enum):
 class DecisionTier(str, enum.Enum):
     L1 = "L1"
     L2 = "L2"
+    L3 = "L3"
 
 
 class AgentTrustLevel(str, enum.Enum):
@@ -113,6 +114,7 @@ class RPCErrorCode(str, enum.Enum):
 class ClassifiedBy(str, enum.Enum):
     L1 = "L1"
     L2 = "L2"
+    L3 = "L3"
     MANUAL = "manual"
 
 

@@ -186,6 +186,99 @@ def test_integrations_status_json_reports_codex_session_dir_reachability(
     assert payload["codex_session_dir_reachable"] is True
 
 
+def test_integrations_status_json_includes_framework_capability_matrix(
+    tmp_path,
+    capsys,
+):
+    env_file = tmp_path / ".env.clawsentry"
+    env_file.write_text(
+        "\n".join(
+            [
+                "CS_FRAMEWORK=codex",
+                "CS_ENABLED_FRAMEWORKS=codex,claude-code",
+                "CS_CODEX_WATCH_ENABLED=true",
+                "",
+            ]
+        )
+    )
+
+    exit_code = run_integrations_status(target_dir=tmp_path, json_mode=True)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["framework_capabilities"]["a3s-code"]["integration_mode"] == "explicit_sdk_transport"
+    assert payload["framework_capabilities"]["codex"]["integration_mode"] == "session_jsonl_watcher"
+    assert payload["framework_capabilities"]["codex"]["pre_action_interception"] == "not_supported"
+    assert payload["framework_capabilities"]["claude-code"]["host_config_dependency"].startswith("~/.claude")
+    assert payload["enabled_framework_details"]["codex"]["maturity_label"] == "medium"
+    assert payload["enabled_framework_details"]["claude-code"]["pre_action_label"] == "yes"
+
+
+def test_integrations_status_json_includes_framework_readiness(tmp_path, capsys):
+    env_file = tmp_path / ".env.clawsentry"
+    env_file.write_text(
+        "\n".join(
+            [
+                "CS_FRAMEWORK=a3s-code",
+                "CS_ENABLED_FRAMEWORKS=a3s-code,codex,claude-code",
+                "CS_CODEX_WATCH_ENABLED=true",
+                "CS_UDS_PATH=/tmp/clawsentry.sock",
+                "",
+            ]
+        )
+    )
+
+    with patch("pathlib.Path.home", return_value=tmp_path):
+        exit_code = run_integrations_status(target_dir=tmp_path, json_mode=True)
+
+    payload = json.loads(capsys.readouterr().out)
+    readiness = payload["framework_readiness"]
+    assert exit_code == 0
+    assert readiness["a3s-code"]["status"] == "manual_verification_required"
+    assert readiness["a3s-code"]["next_step"].startswith(
+        "Verify agent code sets SessionOptions.ahp_transport"
+    )
+    assert readiness["codex"]["status"] == "needs_attention"
+    assert readiness["codex"]["checks"]["watcher_enabled"] is True
+    assert readiness["codex"]["checks"]["session_dir_reachable"] is False
+    assert readiness["claude-code"]["status"] == "needs_attention"
+    assert "clawsentry init claude-code" in readiness["claude-code"]["next_step"]
+
+
+def test_integrations_status_json_reports_openclaw_host_setup_gaps(
+    tmp_path,
+    capsys,
+):
+    env_file = tmp_path / ".env.clawsentry"
+    env_file.write_text(
+        "\n".join(
+            [
+                "CS_FRAMEWORK=openclaw",
+                "CS_ENABLED_FRAMEWORKS=openclaw",
+                "OPENCLAW_ENFORCEMENT_ENABLED=true",
+                "OPENCLAW_OPERATOR_TOKEN=test-token",
+                "",
+            ]
+        )
+    )
+
+    openclaw_home = tmp_path / ".openclaw"
+    openclaw_home.mkdir()
+    (openclaw_home / "openclaw.json").write_text("{}")
+
+    with patch("pathlib.Path.home", return_value=tmp_path):
+        exit_code = run_integrations_status(target_dir=tmp_path, json_mode=True)
+
+    payload = json.loads(capsys.readouterr().out)
+    readiness = payload["framework_readiness"]["openclaw"]
+    assert exit_code == 0
+    assert readiness["status"] == "needs_attention"
+    assert readiness["checks"]["project_env_configured"] is True
+    assert readiness["checks"]["openclaw_exec_host_gateway"] is False
+    assert readiness["checks"]["exec_approvals_configured"] is False
+    assert "clawsentry init openclaw --setup --dry-run" in readiness["next_step"]
+
+
 def test_integrations_status_text_includes_extended_diagnostics(tmp_path, capsys):
     env_file = tmp_path / ".env.clawsentry"
     env_file.write_text(
@@ -241,3 +334,166 @@ def test_integrations_status_text_includes_extended_diagnostics(tmp_path, capsys
     assert "available" in out
     assert "Codex session dir:" in out
     assert str(sessions_dir) in out
+
+
+def test_integrations_status_json_reports_framework_capability_matrix(
+    tmp_path,
+    capsys,
+):
+    env_file = tmp_path / ".env.clawsentry"
+    env_file.write_text(
+        "\n".join(
+            [
+                "CS_ENABLED_FRAMEWORKS=a3s-code,claude-code,codex,openclaw",
+                "CS_CODEX_WATCH_ENABLED=true",
+                "",
+            ]
+        )
+    )
+
+    exit_code = run_integrations_status(target_dir=tmp_path, json_mode=True)
+
+    payload = json.loads(capsys.readouterr().out)
+    capabilities = payload["framework_capabilities"]
+    assert exit_code == 0
+    assert capabilities["a3s-code"]["integration_mode"] == "explicit_sdk_transport"
+    assert capabilities["a3s-code"]["pre_action_interception"] == "supported"
+    assert capabilities["openclaw"]["pre_action_interception"] == "host_config_required"
+    assert capabilities["codex"]["pre_action_interception"] == "not_supported"
+    assert capabilities["codex"]["post_action_observation"] == "session_log_watcher"
+    assert capabilities["claude-code"]["integration_mode"] == "host_hooks"
+    assert capabilities["claude-code"]["maturity"] == "hook_dependent"
+
+
+def test_integrations_status_text_includes_framework_capability_summary(
+    tmp_path,
+    capsys,
+):
+    env_file = tmp_path / ".env.clawsentry"
+    env_file.write_text(
+        "\n".join(
+            [
+                "CS_ENABLED_FRAMEWORKS=a3s-code,codex,openclaw",
+                "CS_CODEX_WATCH_ENABLED=true",
+                "",
+            ]
+        )
+    )
+
+    exit_code = run_integrations_status(target_dir=tmp_path)
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Framework capabilities:" in out
+    assert "a3s-code" in out
+    assert "mode=explicit_sdk_transport" in out
+    assert "codex" in out
+    assert "pre=not_supported" in out
+    assert "openclaw" in out
+    assert "maturity=strong_with_host_setup" in out
+    assert "Enabled framework details:" in out
+    assert "codex: session JSONL watcher | pre-action: no | post-action: yes | maturity: medium" in out
+    assert "openclaw: websocket approvals + webhook receiver | pre-action: yes | post-action: yes | maturity: medium-high" in out
+
+
+def test_integrations_status_json_includes_framework_readiness(
+    tmp_path,
+    capsys,
+):
+    env_file = tmp_path / ".env.clawsentry"
+    env_file.write_text(
+        "\n".join(
+            [
+                "CS_FRAMEWORK=a3s-code",
+                "CS_ENABLED_FRAMEWORKS=a3s-code,openclaw,codex,claude-code",
+                "CS_UDS_PATH=/tmp/clawsentry.sock",
+                "CS_CODEX_WATCH_ENABLED=true",
+                "OPENCLAW_WS_URL=ws://127.0.0.1:18789",
+                "OPENCLAW_OPERATOR_TOKEN=test-token",
+                "OPENCLAW_ENFORCEMENT_ENABLED=true",
+                "",
+            ]
+        )
+    )
+
+    openclaw_home = tmp_path / ".openclaw"
+    openclaw_home.mkdir()
+    (openclaw_home / "openclaw.json").write_text(
+        json.dumps({"tools": {"exec": {"host": "sandbox"}}})
+    )
+    (openclaw_home / "exec-approvals.json").write_text(
+        json.dumps({"security": "deny", "ask": "manual"})
+    )
+
+    with patch("pathlib.Path.home", return_value=tmp_path):
+        exit_code = run_integrations_status(target_dir=tmp_path, json_mode=True)
+
+    payload = json.loads(capsys.readouterr().out)
+    readiness = payload["framework_readiness"]
+    assert exit_code == 0
+    assert readiness["a3s-code"]["status"] == "manual_verification_required"
+    assert "SessionOptions.ahp_transport" in readiness["a3s-code"]["summary"]
+    assert readiness["openclaw"]["status"] == "needs_attention"
+    assert "tools.exec.host" in " ".join(readiness["openclaw"]["warnings"])
+    assert "--setup-openclaw" in readiness["openclaw"]["next_step"]
+    assert readiness["codex"]["status"] == "needs_attention"
+    assert "session dir" in " ".join(readiness["codex"]["warnings"]).lower()
+    assert "CS_CODEX_SESSION_DIR" in readiness["codex"]["next_step"]
+    assert readiness["claude-code"]["status"] == "needs_attention"
+    assert "hooks" in " ".join(readiness["claude-code"]["warnings"]).lower()
+
+
+def test_integrations_status_text_includes_framework_readiness_block(
+    tmp_path,
+    capsys,
+):
+    env_file = tmp_path / ".env.clawsentry"
+    env_file.write_text(
+        "\n".join(
+            [
+                "CS_FRAMEWORK=a3s-code",
+                "CS_ENABLED_FRAMEWORKS=a3s-code,codex,claude-code",
+                "CS_UDS_PATH=/tmp/clawsentry.sock",
+                "CS_CODEX_WATCH_ENABLED=true",
+                "",
+            ]
+        )
+    )
+
+    with patch("pathlib.Path.home", return_value=tmp_path):
+        exit_code = run_integrations_status(target_dir=tmp_path)
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Readiness:" in out
+    assert "a3s-code: manual verification required" in out
+    assert "codex: needs attention" in out
+    assert "claude-code: needs attention" in out
+    assert "clawsentry init claude-code" in out
+
+
+def test_integrations_status_text_includes_framework_readiness_section(
+    tmp_path,
+    capsys,
+):
+    env_file = tmp_path / ".env.clawsentry"
+    env_file.write_text(
+        "\n".join(
+            [
+                "CS_ENABLED_FRAMEWORKS=a3s-code,codex",
+                "CS_CODEX_WATCH_ENABLED=true",
+                "CS_UDS_PATH=/tmp/clawsentry.sock",
+                "",
+            ]
+        )
+    )
+
+    with patch("pathlib.Path.home", return_value=tmp_path):
+        exit_code = run_integrations_status(target_dir=tmp_path)
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Readiness:" in out
+    assert "a3s-code: manual verification required" in out
+    assert "codex: needs attention" in out
+    assert "next step:" in out

@@ -64,6 +64,7 @@ class SessionRegistry:
         tool_name = event.get("tool_name")
         decision_verdict = str(decision.get("decision") or "unknown")
         actual_tier = str(meta.get("actual_tier") or "unknown")
+        classified_by = str(snapshot.get("classified_by") or actual_tier or "unknown")
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
         workspace_root = str(
             payload.get("cwd")
@@ -139,6 +140,8 @@ class SessionRegistry:
             "composite_score": int(snapshot.get("composite_score") or 0),
             "tool_name": tool_name,
             "decision": decision_verdict,
+            "actual_tier": actual_tier,
+            "classified_by": classified_by,
         })
         self._sessions[session_id] = session
         self._evict_if_needed()
@@ -249,6 +252,8 @@ class SessionRegistry:
                     "composite_score": item["composite_score"],
                     "tool_name": item["tool_name"],
                     "decision": item["decision"],
+                    "actual_tier": item["actual_tier"],
+                    "classified_by": item["classified_by"],
                 }
                 for item in timeline
             ],

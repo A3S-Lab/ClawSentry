@@ -34,3 +34,44 @@ def test_defer_panel_uses_explicit_defer_lifecycle_events() -> None:
     source = _read_ui_file("pages/DeferPanel.tsx")
 
     assert "connectSSE(['defer_pending', 'defer_resolved'])" in source
+
+
+def test_alerts_page_uses_backend_aligned_severity_taxonomy() -> None:
+    source = _read_ui_file("pages/Alerts.tsx")
+
+    assert '<option value="low">Low</option>' in source
+    assert '<option value="medium">Medium</option>' in source
+    assert '<option value="high">High</option>' in source
+    assert '<option value="critical">Critical</option>' in source
+    assert '<option value="warning">' not in source
+    assert '<option value="info">' not in source
+    assert "high: 'var(--color-block)'" in source
+
+
+def test_alert_types_bind_severity_to_risk_levels() -> None:
+    source = _read_ui_file("api/types.ts")
+
+    assert "export type AlertSeverity = RiskLevel" in source
+    assert "severity: AlertSeverity" in source
+
+
+def test_ui_types_expose_l3_as_a_first_class_decision_tier() -> None:
+    source = _read_ui_file("api/types.ts")
+
+    assert "export type DecisionTier = 'L1' | 'L2' | 'L3'" in source
+    assert "actual_tier: DecisionTier" in source
+
+
+def test_session_risk_timeline_exposes_tier_fields_without_trace_parsing() -> None:
+    source = _read_ui_file("api/types.ts")
+    timeline_section = source.split("risk_timeline: Array<{", 1)[1].split("}>", 1)[0]
+
+    assert "actual_tier: DecisionTier" in timeline_section
+    assert "classified_by: DecisionTier" in timeline_section
+
+
+def test_alerts_page_gates_sse_insertions_by_active_filters() -> None:
+    source = _read_ui_file("pages/Alerts.tsx")
+
+    assert "const matchesAlertFilters" in source
+    assert "matchesAlertFilters(newAlert, severity, showAcknowledged)" in source

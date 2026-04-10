@@ -355,6 +355,42 @@ class TestRunStart:
         out = capsys.readouterr().out
         assert "Enabled:    a3s-code, codex" in out
 
+    def test_run_start_banner_includes_framework_readiness(self, tmp_path, capsys):
+        env_file = tmp_path / ".env.clawsentry"
+        env_file.write_text(
+            "CS_AUTH_TOKEN=test-token-123\n"
+            "CS_FRAMEWORK=a3s-code\n"
+            "CS_ENABLED_FRAMEWORKS=a3s-code,codex,claude-code\n"
+            "CS_CODEX_WATCH_ENABLED=true\n"
+            "CS_UDS_PATH=/tmp/clawsentry.sock\n"
+        )
+
+        with (
+            patch("clawsentry.cli.start_command.launch_gateway") as mock_launch,
+            patch("clawsentry.cli.start_command.wait_for_health", return_value=True),
+            patch("clawsentry.cli.start_command.shutdown_gateway"),
+            patch("pathlib.Path.home", return_value=tmp_path),
+        ):
+            mock_launch.return_value = MagicMock(pid=99999)
+
+            run_start(
+                framework="a3s-code",
+                enabled_frameworks=["a3s-code", "codex", "claude-code"],
+                host="127.0.0.1",
+                port=8080,
+                target_dir=tmp_path,
+                no_watch=True,
+                interactive=False,
+            )
+
+        out = capsys.readouterr().out
+        assert "Readiness:" in out
+        assert "a3s-code: manual verification required" in out
+        assert "codex: needs attention" in out
+        assert "claude-code: needs attention" in out
+        assert "Next actions:" in out
+        assert "clawsentry init claude-code" in out
+
     def test_run_start_banner_mentions_openclaw_setup_hint(self, tmp_path, capsys):
         env_file = tmp_path / ".env.clawsentry"
         env_file.write_text(
@@ -459,6 +495,36 @@ class TestRunStart:
         out = capsys.readouterr().out
         assert "Enabled:    a3s-code, codex" in out
 
+    def test_run_start_latch_no_watch_keeps_stack_running(self, tmp_path, capsys):
+        env_file = tmp_path / ".env.clawsentry"
+        env_file.write_text("CS_AUTH_TOKEN=test-token-123\n")
+
+        with (
+            patch("clawsentry.latch.binary_manager.BinaryManager") as mock_bm_cls,
+            patch("clawsentry.latch.process_manager.ProcessManager") as mock_pm_cls,
+        ):
+            mock_bm = MagicMock()
+            mock_bm.is_installed = True
+            mock_bm.binary_path = tmp_path / "latch"
+            mock_bm_cls.return_value = mock_bm
+            mock_pm = MagicMock()
+            mock_pm.wait_for_health.return_value = True
+            mock_pm_cls.return_value = mock_pm
+
+            run_start(
+                framework="a3s-code",
+                host="127.0.0.1",
+                port=8080,
+                target_dir=tmp_path,
+                no_watch=True,
+                interactive=False,
+                with_latch=True,
+            )
+
+        out = capsys.readouterr().out
+        assert "clawsentry latch stop" in out
+        mock_pm.stop_all.assert_not_called()
+
     def test_run_start_no_watch_mode(self, tmp_path, capsys):
         env_file = tmp_path / ".env.clawsentry"
         env_file.write_text("CS_AUTH_TOKEN=abc\n")
@@ -484,6 +550,69 @@ class TestRunStart:
             out = capsys.readouterr().out
             assert "clawsentry stop" in out
             assert "Ctrl+C" not in out
+
+    def test_run_start_no_watch_prints_framework_readiness_summary(
+        self,
+        tmp_path,
+        capsys,
+    ):
+        env_file = tmp_path / ".env.clawsentry"
+        env_file.write_text(
+            "\n".join(
+                [
+                    "CS_AUTH_TOKEN=abc",
+                    "CS_FRAMEWORK=a3s-code",
+                    "CS_ENABLED_FRAMEWORKS=a3s-code,openclaw,codex,claude-code",
+                    "CS_UDS_PATH=/tmp/clawsentry.sock",
+                    "CS_CODEX_WATCH_ENABLED=true",
+                    "OPENCLAW_WS_URL=ws://127.0.0.1:18789",
+                    "OPENCLAW_OPERATOR_TOKEN=test-token",
+                    "OPENCLAW_ENFORCEMENT_ENABLED=true",
+                    "",
+                ]
+            )
+        )
+
+        openclaw_home = tmp_path / ".openclaw"
+        openclaw_home.mkdir()
+        (openclaw_home / "openclaw.json").write_text(
+            json.dumps({"tools": {"exec": {"host": "sandbox"}}})
+        )
+        (openclaw_home / "exec-approvals.json").write_text(
+            json.dumps({"security": "deny", "ask": "manual"})
+        )
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch("clawsentry.cli.start_command.launch_gateway") as mock_launch,
+            patch("clawsentry.cli.start_command.wait_for_health", return_value=True),
+            patch("clawsentry.cli.start_command.run_watch_loop") as mock_watch,
+            patch("clawsentry.cli.start_command.shutdown_gateway"),
+        ):
+            mock_launch.return_value = MagicMock(pid=99999)
+
+            run_start(
+                framework="a3s-code",
+                enabled_frameworks=["a3s-code", "openclaw", "codex", "claude-code"],
+                host="127.0.0.1",
+                port=8080,
+                target_dir=tmp_path,
+                no_watch=True,
+                interactive=False,
+                openclaw_home=openclaw_home,
+            )
+
+            mock_watch.assert_not_called()
+
+        out = capsys.readouterr().out
+        assert "Readiness:" in out
+        assert "a3s-code: manual verification required" in out
+        assert "openclaw: needs attention" in out
+        assert "codex: needs attention" in out
+        assert "claude-code: needs attention" in out
+        assert "--setup-openclaw" in out
+        assert "Next actions:" in out
+        assert "clawsentry integrations status --json" in out
 
     def test_run_start_exits_on_health_fail(self, tmp_path, capsys):
         env_file = tmp_path / ".env.clawsentry"

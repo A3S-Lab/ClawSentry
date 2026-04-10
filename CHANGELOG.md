@@ -6,6 +6,25 @@
 
 ---
 
+## [0.4.0] — 2026-04-10
+
+### 改进
+
+- **审计整改主线收口** — 统一 `Alerts` severity taxonomy，`watch --interactive` 真正接入 DEFER resolve 流程，L3 提升为可观测的一等决策层，RuntimeFeed 新增过滤 / 高优先级视图 / 暂停与 backlog 提示，跨框架兼容矩阵与浏览器级验证夹具一并落地。
+- **多框架自检与启动体验增强** — `clawsentry integrations status` 新增 `framework_readiness`，按框架输出 `status / summary / checks / warnings / next_step`；`clawsentry start` 与 `start --with-latch` 复用同一份 readiness 诊断，在 banner 中直接提示 `a3s-code` 显式 SDK wiring、`codex` watcher/session dir、`claude-code` hooks、`openclaw` 宿主配置缺口。
+- **Latch 集成产品化收口** — 修复 `start --with-latch --no-watch` 生命周期、将 `latch install` tar 解压改为兼容 Python 3.11 的安全实现，并让 `--with-latch` 的 `Web UI` / `--open-browser` 统一跳转到 Hub UI。
+
+### 文档
+
+- **公开文档与 README 对齐新语义** — Quickstart、CLI 参考、OpenClaw 集成页、GitHub README 与包内 README 全部更新到 readiness 诊断、多框架 start banner 和当前测试基线；包内 README 顶部 Python 版本口径同步为 `3.11+`。
+- **新增正式审计与验证记录** — 仓库内补齐实现审计、整改方案、兼容矩阵、浏览器验证、Latch focused validation 与 rollout readiness 文档，形成本次 0.4.0 收口证据链。
+
+### 测试与验证
+
+- Python 回归：完整测试 `2331 passed, 3 skipped`
+- `mkdocs build --strict`：PASS
+- focused start/integrations 回归：`65 passed`
+
 ## [0.3.9] — 2026-04-09
 
 ### 修复
@@ -692,6 +711,7 @@
 - 775 个测试用例，覆盖单元测试 + 集成测试 + E2E 测试
 - 测试通过时间 ~6.5s
 
+[0.4.0]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.4.0
 [0.3.6]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.6
 [0.3.9]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.9
 [0.3.8]: https://github.com/Elroyper/ClawSentry/releases/tag/v0.3.8

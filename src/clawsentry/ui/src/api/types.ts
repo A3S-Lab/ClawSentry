@@ -1,5 +1,7 @@
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical'
 export type DecisionVerdict = 'allow' | 'block' | 'defer' | 'modify'
+export type DecisionTier = 'L1' | 'L2' | 'L3'
+export type AlertSeverity = RiskLevel
 
 export interface HealthResponse {
   status: string
@@ -16,7 +18,7 @@ export interface SummaryResponse {
   by_event_type: Record<string, number>
   by_decision: Record<string, number>
   by_risk_level: Record<string, number>
-  by_actual_tier: Record<string, number>
+  by_actual_tier: Partial<Record<DecisionTier, number>>
   by_caller_adapter: Record<string, number>
   generated_at: string
   window_seconds: number | null
@@ -59,10 +61,12 @@ export interface SessionRisk {
     composite_score: number
     tool_name: string
     decision: DecisionVerdict
+    actual_tier: DecisionTier
+    classified_by: DecisionTier
   }>
   risk_hints_seen: string[]
   tools_used: string[]
-  actual_tier_distribution: Record<string, number>
+  actual_tier_distribution: Partial<Record<DecisionTier, number>>
 }
 
 export interface TrajectoryRecord {
@@ -78,13 +82,13 @@ export interface TrajectoryRecord {
     composite_score: number
     dimensions: { d1: number; d2: number; d3: number; d4: number; d5: number }
   }
-  meta: { actual_tier: string; caller_adapter: string }
+  meta: { actual_tier: DecisionTier; caller_adapter: string }
   recorded_at: string
 }
 
 export interface Alert {
   alert_id: string
-  severity: string
+  severity: AlertSeverity
   metric: string
   session_id: string
   message: string
@@ -101,7 +105,7 @@ export interface SSEDecisionEvent {
   risk_level: RiskLevel
   decision: DecisionVerdict
   tool_name: string
-  actual_tier: string
+  actual_tier: DecisionTier
   timestamp: string
   reason: string
   command: string
@@ -111,7 +115,7 @@ export interface SSEDecisionEvent {
 
 export interface SSEAlertEvent {
   alert_id: string
-  severity: string
+  severity: AlertSeverity
   metric: string
   session_id: string
   current_risk: string

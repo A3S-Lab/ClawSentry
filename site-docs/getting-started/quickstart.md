@@ -398,6 +398,8 @@ clawsentry init openclaw --auto-detect --setup
 clawsentry start --frameworks a3s-code,codex,openclaw --no-watch
 ```
 
+这条命令除了显示 `Enabled: ...`，还会在启动 banner 里打印每个框架的 `Readiness` 摘要与 `Next actions`。例如，`a3s-code` 会提示仍需人工确认 `SessionOptions.ahp_transport` 是否已经在 agent 代码里接好，`openclaw` 会在宿主配置不完整时直接提醒你改用 `--setup-openclaw`。
+
 合并时不会轮换已有 `CS_AUTH_TOKEN`，也不会改写已有 `CS_FRAMEWORK`；新增框架会记录到 `CS_ENABLED_FRAMEWORKS`：
 
 ```ini
@@ -427,6 +429,14 @@ clawsentry init openclaw --uninstall
 ```bash
 clawsentry integrations status
 ```
+
+如果你需要脚本化检查或想看更细的排障线索，使用：
+
+```bash
+clawsentry integrations status --json
+```
+
+其中 `framework_readiness` 会按框架给出 `status / summary / checks / warnings / next_step`，适合 CI、自检脚本和 release 前人工复核。
 
 ---
 

@@ -13,18 +13,31 @@ class AlertRegistry:
 
     MAX_ALERTS = 5_000
     VALID_SEVERITIES = {"low", "medium", "high", "critical"}
+    LEGACY_SEVERITY_MAP = {
+        "info": "low",
+        "warning": "medium",
+    }
 
     def __init__(self) -> None:
         self._alerts: dict[str, dict[str, Any]] = {}  # alert_id -> alert record
+
+    @classmethod
+    def normalize_severity(cls, severity: Any) -> str:
+        normalized = str(severity or "low").strip().lower()
+        if normalized in cls.VALID_SEVERITIES:
+            return normalized
+        return cls.LEGACY_SEVERITY_MAP.get(normalized, normalized or "low")
 
     def add(self, alert: dict[str, Any]) -> None:
         """Insert a new alert, evicting the oldest entry when the cap is reached."""
         if len(self._alerts) >= self.MAX_ALERTS:
             oldest = next(iter(self._alerts))
             del self._alerts[oldest]
-        alert_id = str(alert.get("alert_id") or "")
+        normalized_alert = dict(alert)
+        normalized_alert["severity"] = self.normalize_severity(alert.get("severity"))
+        alert_id = str(normalized_alert.get("alert_id") or "")
         if alert_id:
-            self._alerts[alert_id] = alert
+            self._alerts[alert_id] = normalized_alert
 
     def list_alerts(
         self,

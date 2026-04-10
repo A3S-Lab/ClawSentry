@@ -830,6 +830,69 @@ async def handle_defer_interactive(
 _RECONNECT_DELAY = 3.0
 
 
+async def _resolve_defer_approval(
+    gateway_url: str,
+    approval_id: str,
+    decision: str,
+    *,
+    token: str | None = None,
+    reason: str | None = None,
+) -> bool:
+    """Resolve a pending approval through the gateway HTTP API."""
+
+    payload = json.dumps(
+        {
+            "approval_id": approval_id,
+            "decision": decision,
+            "reason": reason or "",
+        }
+    ).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    request = urllib.request.Request(
+        f"{gateway_url.rstrip('/')}/ahp/resolve",
+        data=payload,
+        headers=headers,
+        method="POST",
+    )
+
+    def _send_request() -> bool:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            body = response.read().decode("utf-8")
+        if not body:
+            return True
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            return True
+        return data.get("status") == "ok"
+
+    loop = asyncio.get_running_loop()
+    try:
+        return await loop.run_in_executor(None, _send_request)
+    except (urllib.error.URLError, OSError):
+        return False
+
+
+def _prepare_interactive_defer_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Attach expires_at for prompts when SSE only carries timeout_s."""
+    prompt_event = dict(event)
+    if prompt_event.get("expires_at") is not None:
+        return prompt_event
+
+    timeout_s = prompt_event.get("timeout_s")
+    try:
+        if timeout_s is not None:
+            prompt_event["expires_at"] = int((time.time() + float(timeout_s)) * 1000)
+    except (TypeError, ValueError):
+        pass
+    return prompt_event
+
+
 def _prefetch_sessions(
     tracker: SessionTracker,
     gateway_url: str,
@@ -967,6 +1030,21 @@ def run_watch(
                             print(prefixed, flush=True)
                         else:
                             print(output, flush=True)
+
+                    if interactive and parsed.get("type") == "defer_pending":
+                        prompt_event = _prepare_interactive_defer_event(parsed)
+                        asyncio.run(
+                            handle_defer_interactive(
+                                prompt_event,
+                                resolve_fn=lambda approval_id, decision, *, reason=None: _resolve_defer_approval(
+                                    gateway_url,
+                                    approval_id,
+                                    decision,
+                                    token=token,
+                                    reason=reason,
+                                ),
+                            )
+                        )
 
                     if after_text:
                         print(after_text, flush=True)

@@ -17,7 +17,8 @@ import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 
 from clawsentry.gateway.server import SupervisionGateway, create_http_app, start_uds_server
-from clawsentry.gateway.models import RPC_VERSION
+from clawsentry.gateway.models import DecisionTier, RiskLevel, RPC_VERSION
+from clawsentry.gateway.semantic_analyzer import L2Result
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +237,112 @@ class TestGatewayCore:
         result = await gw.handle_jsonrpc(body)
         assert result["result"]["actual_tier"] == "L2"
         assert result["result"]["decision"]["decision"] == "block"
+        record = gw.trajectory_store.records[-1]
+        assert record["meta"]["actual_tier"] == "L2"
+        assert record["risk_snapshot"]["classified_by"] == "L2"
+
+    @pytest.mark.asyncio
+    async def test_requested_l3_propagates_actual_tier_to_response_reporting_and_sse(self):
+        class L3WinningAnalyzer:
+            analyzer_id = "test-l3-winner"
+
+            async def analyze(self, event, context, l1_snapshot, budget_ms):
+                return L2Result(
+                    target_level=RiskLevel.HIGH,
+                    reasons=["L3 escalated on operator review"],
+                    confidence=0.91,
+                    analyzer_id=self.analyzer_id,
+                    latency_ms=42.0,
+                    trace={"trigger_reason": "manual_l3_escalate", "mode": "single_turn", "turns": []},
+                    decision_tier=DecisionTier.L3,
+                )
+
+        gw = SupervisionGateway(analyzer=L3WinningAnalyzer())
+        sub_id, queue = gw.event_bus.subscribe(event_types={"decision"})
+        try:
+            params = _sync_decision_params(
+                request_id="req-l3-explicit",
+                decision_tier="L3",
+                deadline_ms=1500,
+                event={
+                    "event_id": "evt-l3-explicit",
+                    "trace_id": "trace-l3-explicit",
+                    "event_type": "pre_action",
+                    "session_id": "sess-l3-explicit",
+                    "agent_id": "agent-001",
+                    "source_framework": "test",
+                    "occurred_at": "2026-03-19T12:00:00+00:00",
+                    "payload": {"command": "cat prod-token.txt"},
+                    "tool_name": "bash",
+                    "risk_hints": ["credential_exfiltration"],
+                },
+            )
+            body = _jsonrpc_request("ahp/sync_decision", params)
+            result = await gw.handle_jsonrpc(body)
+
+            assert result["result"]["actual_tier"] == "L3"
+            assert result["result"]["decision"]["decision"] == "block"
+
+            record = gw.trajectory_store.records[-1]
+            assert record["meta"]["actual_tier"] == "L3"
+            assert record["risk_snapshot"]["classified_by"] == "L3"
+            assert record["l3_trace"]["trigger_reason"] == "manual_l3_escalate"
+
+            session_risk = gw.report_session_risk("sess-l3-explicit")
+            assert session_risk["actual_tier_distribution"]["L3"] == 1
+            assert session_risk["risk_timeline"][-1]["actual_tier"] == "L3"
+            assert session_risk["risk_timeline"][-1]["classified_by"] == "L3"
+
+            summary = gw.report_summary()
+            assert summary["by_actual_tier"]["L3"] >= 1
+
+            decision_events = []
+            while not queue.empty():
+                decision_events.append(queue.get_nowait())
+            assert any(
+                event.get("type") == "decision" and event.get("actual_tier") == "L3"
+                for event in decision_events
+            )
+        finally:
+            gw.event_bus.unsubscribe(sub_id)
+
+    @pytest.mark.asyncio
+    async def test_requested_l3_keeps_actual_tier_l2_when_non_agent_result_wins(self):
+        class L2WinningAnalyzer:
+            analyzer_id = "test-l2-winner"
+
+            async def analyze(self, event, context, l1_snapshot, budget_ms):
+                return L2Result(
+                    target_level=RiskLevel.HIGH,
+                    reasons=["L2 semantic escalation"],
+                    confidence=0.88,
+                    analyzer_id="llm-openai",
+                    latency_ms=12.0,
+                    trace={"trigger_reason": "trigger_not_matched", "mode": None, "turns": []},
+                    decision_tier=DecisionTier.L2,
+                )
+
+        gw = SupervisionGateway(analyzer=L2WinningAnalyzer())
+        params = _sync_decision_params(
+            request_id="req-l3-l2-wins",
+            decision_tier="L3",
+            deadline_ms=1500,
+            event={
+                "event_id": "evt-l3-l2-wins",
+                "trace_id": "trace-l3-l2-wins",
+                "event_type": "pre_action",
+                "session_id": "sess-l3-l2-wins",
+                "agent_id": "agent-001",
+                "source_framework": "test",
+                "occurred_at": "2026-03-19T12:00:00+00:00",
+                "payload": {"url": "https://example.com"},
+                "tool_name": "http_request",
+                "risk_hints": ["credential_exfiltration"],
+            },
+        )
+        result = await gw.handle_jsonrpc(_jsonrpc_request("ahp/sync_decision", params))
+
+        assert result["result"]["actual_tier"] == "L2"
         record = gw.trajectory_store.records[-1]
         assert record["meta"]["actual_tier"] == "L2"
         assert record["risk_snapshot"]["classified_by"] == "L2"
@@ -1832,6 +1939,29 @@ class TestAlertRegistry:
         result = reg.list_alerts(severity="critical")
         assert len(result["alerts"]) == 1
         assert result["alerts"][0]["alert_id"] == "a2"
+
+    def test_legacy_warning_severity_is_normalized_to_medium(self):
+        from clawsentry.gateway.server import AlertRegistry
+        reg = AlertRegistry()
+        reg.add({
+            "alert_id": "legacy-warning",
+            "severity": "warning",
+            "metric": "invalid_event_rate_15m",
+            "session_id": "s",
+            "message": "legacy warning alert",
+            "details": {},
+            "triggered_at": "2026-01-01T00:00:00+00:00",
+            "triggered_at_ts": 1.0,
+            "acknowledged": False,
+            "acknowledged_by": None,
+            "acknowledged_at": None,
+        })
+
+        result = reg.list_alerts(severity="medium")
+
+        assert len(result["alerts"]) == 1
+        assert result["alerts"][0]["alert_id"] == "legacy-warning"
+        assert result["alerts"][0]["severity"] == "medium"
 
     def test_filter_acknowledged(self):
         from clawsentry.gateway.server import AlertRegistry

@@ -148,6 +148,7 @@ clawsentry start --frameworks a3s-code,codex,openclaw --no-watch
 ```
 
 此命令会按列表增量合并 `.env.clawsentry`，启动 banner 会显示 `Enabled: a3s-code, codex, openclaw`。默认不会修改 `~/.openclaw/`；如需在启动时一并配置 OpenClaw 侧审批文件，显式添加 `--setup-openclaw`。
+从这版开始，banner 还会打印 `Readiness` 摘要，把每个框架当前是 `ready`、`needs attention` 还是 `manual verification required` 直接讲明白，并给出 `Next actions`。
 
 #### 启动时同时设置 OpenClaw
 
@@ -1045,14 +1046,22 @@ clawsentry integrations status
     OpenClaw restore: available
     OpenClaw restore files: /home/user/.openclaw/openclaw.json.bak
     a3s transport env: not configured
-    Claude hooks: present
-    Claude hooks files: /home/user/.claude/settings.json
+    Claude hooks: not present
+    Claude hooks files: (none)
     Codex session dir: /home/user/.codex/sessions (reachable)
+    Framework readiness:
+    openclaw: ready | project env and host approval files are aligned
+      next step: No action required.
+    codex: ready | watcher enabled and session directory is reachable
+      next step: No action required.
+    claude-code: needs attention | host hooks are missing, so Claude Code can bypass ClawSentry
+      next step: Run clawsentry init claude-code to reinstall the required Claude hooks.
     ============================================================
     ```
 
 `--json` 输出包含适合脚本消费的诊断字段，例如：
 
+- `framework_readiness.<framework>.status / summary / checks / warnings / next_step`
 - `openclaw_restore_available` / `openclaw_restore_files`
 - `claude_code_hook_files`
 - `codex_session_dir` / `codex_session_dir_reachable`

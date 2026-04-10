@@ -337,7 +337,7 @@ class TrajectoryStore:
             })
         if total_15m > 0 and INVALID_EVENT_RATE_WARNING_15M_MIN <= rate_15m <= INVALID_EVENT_RATE_WARNING_15M_MAX:
             alerts.append({
-                "metric": "invalid_event_rate_15m", "severity": "warning",
+                "metric": "invalid_event_rate_15m", "severity": "medium",
                 "value": rate_15m, "threshold": "0.1%-1%/15m",
             })
 

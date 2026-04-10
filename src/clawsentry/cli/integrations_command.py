@@ -9,6 +9,58 @@ from pathlib import Path
 from .initializers.base import ENV_FILE_NAME, read_env_file
 
 
+FRAMEWORK_CAPABILITIES: dict[str, dict[str, str]] = {
+    "a3s-code": {
+        "integration_mode": "explicit_sdk_transport",
+        "integration_mode_label": "explicit SDK transport + harness",
+        "pre_action_interception": "supported",
+        "pre_action_label": "yes",
+        "post_action_observation": "supported",
+        "post_action_label": "yes",
+        "host_config_dependency": "agent code must set SessionOptions.ahp_transport explicitly",
+        "failure_mode": "agent runs without ClawSentry supervision if transport is not wired",
+        "maturity": "strong_reference_integration",
+        "maturity_label": "high",
+    },
+    "openclaw": {
+        "integration_mode": "websocket_webhook",
+        "integration_mode_label": "websocket approvals + webhook receiver",
+        "pre_action_interception": "host_config_required",
+        "pre_action_label": "yes",
+        "post_action_observation": "supported",
+        "post_action_label": "yes",
+        "host_config_dependency": "~/.openclaw must be configured for gateway exec + webhook/WS callbacks",
+        "failure_mode": "falls back to partial coverage or no enforcement when host-side OpenClaw config is missing",
+        "maturity": "strong_with_host_setup",
+        "maturity_label": "medium-high",
+    },
+    "codex": {
+        "integration_mode": "session_jsonl_watcher",
+        "integration_mode_label": "session JSONL watcher",
+        "pre_action_interception": "not_supported",
+        "pre_action_label": "no",
+        "post_action_observation": "session_log_watcher",
+        "post_action_label": "yes",
+        "host_config_dependency": "Codex session logs must be reachable via CS_CODEX_SESSION_DIR or $CODEX_HOME/sessions",
+        "failure_mode": "no blocking; ClawSentry sees nothing when session logs are unavailable",
+        "maturity": "observer_only",
+        "maturity_label": "medium",
+    },
+    "claude-code": {
+        "integration_mode": "host_hooks",
+        "integration_mode_label": "host hooks + clawsentry-harness",
+        "pre_action_interception": "supported",
+        "pre_action_label": "yes",
+        "post_action_observation": "supported",
+        "post_action_label": "yes",
+        "host_config_dependency": "~/.claude/settings.json hooks must stay installed",
+        "failure_mode": "Claude Code runs without ClawSentry interception if hooks are missing or bypassed",
+        "maturity": "hook_dependent",
+        "maturity_label": "medium",
+    },
+}
+
+
 def _enabled_frameworks(values: dict[str, str]) -> list[str]:
     enabled: list[str] = []
     for item in values.get("CS_ENABLED_FRAMEWORKS", "").split(","):
@@ -66,24 +118,210 @@ def _codex_session_dir(values: dict[str, str]) -> Path | None:
     return codex_home / "sessions"
 
 
-def _status_payload(target_dir: Path) -> dict[str, object]:
+def _read_json_object(path: Path) -> tuple[dict[str, object] | None, str | None]:
+    """Read a JSON object from disk for host-side readiness checks."""
+    if not path.is_file():
+        return None, f"missing file: {path}"
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, f"failed to parse {path}: {exc}"
+    if not isinstance(data, dict):
+        return None, f"expected JSON object in {path}"
+    return data, None
+
+
+def _status_label(status: str) -> str:
+    return status.replace("_", " ")
+
+
+def _build_framework_readiness(
+    *,
+    values: dict[str, str],
+    enabled: list[str],
+    claude_hook_files: list[str],
+    openclaw_restore_files: list[str],
+    codex_session_dir: Path | None,
+    openclaw_home: Path | None = None,
+) -> dict[str, dict[str, object]]:
+    readiness: dict[str, dict[str, object]] = {}
+
+    if "a3s-code" in enabled:
+        gateway_endpoint_configured = bool(
+            values.get("CS_UDS_PATH") or values.get("CS_HTTP_PORT")
+        )
+        warnings: list[str] = []
+        if not gateway_endpoint_configured:
+            warnings.append("Gateway transport env is not configured in .env.clawsentry.")
+        else:
+            warnings.append(
+                "ClawSentry cannot prove runtime coverage for a3s-code from env alone."
+            )
+        readiness["a3s-code"] = {
+            "status": (
+                "manual_verification_required"
+                if gateway_endpoint_configured
+                else "needs_attention"
+            ),
+            "summary": (
+                "project env is ready, but agent code must wire SessionOptions.ahp_transport"
+                if gateway_endpoint_configured
+                else "project env is incomplete; configure the Gateway endpoint first"
+            ),
+            "checks": {
+                "gateway_endpoint_configured": gateway_endpoint_configured,
+            },
+            "warnings": warnings,
+            "next_step": (
+                "Verify agent code sets SessionOptions.ahp_transport before starting the session."
+                if gateway_endpoint_configured
+                else "Run clawsentry init a3s-code and ensure CS_UDS_PATH or CS_HTTP_PORT is present."
+            ),
+        }
+
+    if "codex" in enabled:
+        watcher_enabled = (
+            values.get("CS_CODEX_WATCH_ENABLED", "").lower()
+            in {"1", "true", "yes", "on"}
+        )
+        session_dir_reachable = bool(codex_session_dir and codex_session_dir.is_dir())
+        warnings = []
+        if not watcher_enabled:
+            warnings.append("Codex watcher is disabled; no session logs will be monitored.")
+        if not session_dir_reachable:
+            warnings.append("Codex session directory is not reachable.")
+        readiness["codex"] = {
+            "status": "ready" if watcher_enabled and session_dir_reachable else "needs_attention",
+            "summary": (
+                "watcher enabled and session directory is reachable"
+                if watcher_enabled and session_dir_reachable
+                else "observer path is not fully wired; ClawSentry may miss Codex sessions"
+            ),
+            "checks": {
+                "watcher_enabled": watcher_enabled,
+                "session_dir_resolved": codex_session_dir is not None,
+                "session_dir_reachable": session_dir_reachable,
+            },
+            "warnings": warnings,
+            "next_step": (
+                "No action required."
+                if watcher_enabled and session_dir_reachable
+                else "Set CS_CODEX_SESSION_DIR or ensure $CODEX_HOME/sessions exists, then keep CS_CODEX_WATCH_ENABLED=true."
+            ),
+        }
+
+    if "claude-code" in enabled:
+        hooks_present = bool(claude_hook_files)
+        warnings = []
+        if not hooks_present:
+            warnings.append("ClawSentry hooks were not found in ~/.claude settings files.")
+        readiness["claude-code"] = {
+            "status": "ready" if hooks_present else "needs_attention",
+            "summary": (
+                "hooks are installed and Claude Code should emit monitored events"
+                if hooks_present
+                else "host hooks are missing, so Claude Code can bypass ClawSentry"
+            ),
+            "checks": {
+                "hooks_present": hooks_present,
+                "hook_files_found": bool(claude_hook_files),
+            },
+            "warnings": warnings,
+            "next_step": (
+                "No action required."
+                if hooks_present
+                else "Run clawsentry init claude-code to reinstall the required Claude hooks."
+            ),
+        }
+
+    if "openclaw" in enabled:
+        home = openclaw_home or Path.home() / ".openclaw"
+        openclaw_json, openclaw_json_error = _read_json_object(home / "openclaw.json")
+        approvals_json, approvals_json_error = _read_json_object(
+            home / "exec-approvals.json"
+        )
+        openclaw_exec_host_gateway = (
+            isinstance(openclaw_json, dict)
+            and openclaw_json.get("tools", {}).get("exec", {}).get("host") == "gateway"
+        )
+        exec_approvals_configured = (
+            isinstance(approvals_json, dict)
+            and approvals_json.get("security") == "allowlist"
+            and approvals_json.get("ask") == "always"
+        )
+        project_env_configured = any(key.startswith("OPENCLAW_") for key in values)
+        warnings = []
+        if openclaw_json_error:
+            warnings.append(openclaw_json_error)
+        if approvals_json_error:
+            warnings.append(approvals_json_error)
+        if project_env_configured and not openclaw_exec_host_gateway:
+            warnings.append('openclaw.json is not configured with tools.exec.host = "gateway".')
+        if project_env_configured and not exec_approvals_configured:
+            warnings.append(
+                'exec-approvals.json is not configured with security="allowlist" and ask="always".'
+            )
+        ready = (
+            project_env_configured
+            and openclaw_exec_host_gateway
+            and exec_approvals_configured
+        )
+        readiness["openclaw"] = {
+            "status": "ready" if ready else "needs_attention",
+            "summary": (
+                "project env and host approval files are aligned"
+                if ready
+                else "project env is present, but host-side OpenClaw setup is still incomplete"
+            ),
+            "checks": {
+                "project_env_configured": project_env_configured,
+                "openclaw_config_present": openclaw_json is not None,
+                "openclaw_exec_host_gateway": openclaw_exec_host_gateway,
+                "exec_approvals_present": approvals_json is not None,
+                "exec_approvals_configured": exec_approvals_configured,
+                "restore_backup_available": bool(openclaw_restore_files),
+            },
+            "warnings": warnings,
+            "next_step": (
+                "No action required."
+                if ready
+                else "Run clawsentry init openclaw --setup --dry-run, then apply setup (or rerun start with --setup-openclaw)."
+            ),
+        }
+
+    return readiness
+
+
+def collect_integration_status(
+    target_dir: Path,
+    *,
+    claude_home: Path | None = None,
+    openclaw_home: Path | None = None,
+) -> dict[str, object]:
     env_path = target_dir / ENV_FILE_NAME
     values = read_env_file(env_path)
     enabled = _enabled_frameworks(values)
+    enabled_framework_details = {
+        framework: dict(FRAMEWORK_CAPABILITIES[framework])
+        for framework in enabled
+        if framework in FRAMEWORK_CAPABILITIES
+    }
     claude_hook_files = (
-        _claude_code_hook_files() if "claude-code" in enabled else []
+        _claude_code_hook_files(claude_home) if "claude-code" in enabled else []
     )
     openclaw_restore_files = (
-        _openclaw_restore_files() if "openclaw" in enabled else []
+        _openclaw_restore_files(openclaw_home) if "openclaw" in enabled else []
     )
     codex_session_dir = (
         _codex_session_dir(values) if "codex" in enabled else None
     )
-    return {
+    payload = {
         "env_file": str(env_path),
         "env_exists": env_path.is_file(),
         "legacy_default": values.get("CS_FRAMEWORK", ""),
         "enabled_frameworks": enabled,
+        "framework_capabilities": FRAMEWORK_CAPABILITIES,
+        "enabled_framework_details": enabled_framework_details,
         "codex_watcher_enabled": (
             values.get("CS_CODEX_WATCH_ENABLED", "").lower()
             in {"1", "true", "yes", "on"}
@@ -104,6 +342,15 @@ def _status_payload(target_dir: Path) -> dict[str, object]:
             codex_session_dir and codex_session_dir.is_dir()
         ),
     }
+    payload["framework_readiness"] = _build_framework_readiness(
+        values=values,
+        enabled=enabled,
+        claude_hook_files=claude_hook_files,
+        openclaw_restore_files=openclaw_restore_files,
+        codex_session_dir=codex_session_dir,
+        openclaw_home=openclaw_home,
+    )
+    return payload
 
 
 def run_integrations_status(
@@ -112,7 +359,7 @@ def run_integrations_status(
     json_mode: bool = False,
 ) -> int:
     """Print configured framework integration status."""
-    payload = _status_payload(target_dir)
+    payload = collect_integration_status(target_dir)
     if json_mode:
         print(json.dumps(payload, indent=2))
         return 0
@@ -163,5 +410,52 @@ def run_integrations_status(
         print(f"Codex session dir: {codex_session_dir} ({codex_status})")
     else:
         print("Codex session dir: (not configured)")
+    all_capabilities = payload["framework_capabilities"]
+    framework_details = payload["enabled_framework_details"]
+    print("Framework capabilities:")
+    if all_capabilities:
+        for framework, details in all_capabilities.items():
+            print(
+                f"{framework}: mode={details['integration_mode']} "
+                f"pre={details['pre_action_interception']} "
+                f"post={details['post_action_observation']} "
+                f"maturity={details['maturity']}"
+            )
+    else:
+        print("(none)")
+    print("Enabled framework details:")
+    if framework_details:
+        for framework in enabled:
+            details = framework_details.get(framework)
+            if not details:
+                continue
+            print(
+                f"{framework}: {details['integration_mode_label']} | "
+                f"pre-action: {details['pre_action_label']} | "
+                f"post-action: {details['post_action_label']} | "
+                f"maturity: {details['maturity_label']}"
+            )
+            print(f"  dependency: {details['host_config_dependency']}")
+            print(f"  failure mode: {details['failure_mode']}")
+    else:
+        print("(none)")
+    readiness = payload["framework_readiness"]
+    print("Readiness:")
+    if readiness:
+        for framework in enabled:
+            details = readiness.get(framework)
+            if not details:
+                continue
+            print(
+                f"{framework}: {_status_label(str(details['status']))} | "
+                f"{details['summary']}"
+            )
+            for warning in details["warnings"]:
+                print(f"  warning: {warning}")
+            next_step = details.get("next_step")
+            if next_step:
+                print(f"  next step: {next_step}")
+    else:
+        print("(none)")
     print("=" * 60)
     return 0

@@ -193,7 +193,7 @@ class InvalidEventChannel:
             if 0.001 <= rate_15m <= 0.01:
                 self._emit_alert(
                     metric="invalid_event_rate_15m",
-                    severity="warning",
+                    severity="medium",
                     value=rate_15m,
                     threshold="0.1%-1%/15m",
                     now_ts=now_ts,

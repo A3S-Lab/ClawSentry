@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+import clawsentry.cli.watch_command as watch_command
 from clawsentry.cli.watch_command import (
     SessionTracker,
     _format_defer_pending,
@@ -940,3 +941,78 @@ class TestInteractivePrompt:
         assert result == "skip"
         assert not called, "_input_fn should not have been called"
         resolve_fn.assert_not_called()
+
+
+class _FakeSSEStream:
+    def __init__(self, lines: list[bytes]) -> None:
+        self._lines = lines
+
+    def __iter__(self):
+        return iter(self._lines)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+class TestRunWatchInteractive:
+    def _make_defer_pending_event(self) -> dict:
+        return {
+            "type": "defer_pending",
+            "session_id": "sess-watch-001",
+            "approval_id": "appr-watch-001",
+            "tool_name": "bash",
+            "command": "rm -rf /tmp/data",
+            "reason": "D1: destructive pattern",
+            "timeout_s": 300,
+            "timestamp": "2026-04-10T12:00:00Z",
+        }
+
+    def _stub_single_stream(self, monkeypatch: pytest.MonkeyPatch, event: dict) -> None:
+        responses = iter([
+            _FakeSSEStream([f"data: {json.dumps(event)}\n".encode("utf-8")]),
+            KeyboardInterrupt(),
+        ])
+
+        def fake_urlopen(*_args, **_kwargs):
+            response = next(responses)
+            if isinstance(response, BaseException):
+                raise response
+            return response
+
+        monkeypatch.setattr(watch_command, "_prefetch_sessions", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(watch_command.urllib.request, "urlopen", fake_urlopen)
+
+    def test_run_watch_interactive_handles_defer_pending_events(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._stub_single_stream(monkeypatch, self._make_defer_pending_event())
+        handled: list[dict] = []
+
+        async def fake_handle(event: dict, *, resolve_fn, _input_fn=None):
+            handled.append(event)
+            return "allow"
+
+        monkeypatch.setattr(watch_command, "handle_defer_interactive", fake_handle)
+
+        watch_command.run_watch("http://gateway.test", interactive=True, color=False)
+
+        assert len(handled) == 1
+        assert handled[0]["type"] == "defer_pending"
+        assert handled[0]["approval_id"] == "appr-watch-001"
+        assert "expires_at" in handled[0]
+
+    def test_run_watch_non_interactive_does_not_prompt_for_defer_pending(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._stub_single_stream(monkeypatch, self._make_defer_pending_event())
+        handled = False
+
+        async def fake_handle(event: dict, *, resolve_fn, _input_fn=None):
+            nonlocal handled
+            handled = True
+            return "allow"
+
+        monkeypatch.setattr(watch_command, "handle_defer_interactive", fake_handle)
+
+        watch_command.run_watch("http://gateway.test", interactive=False, color=False)
+
+        assert handled is False

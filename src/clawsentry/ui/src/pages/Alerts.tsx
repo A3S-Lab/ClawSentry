@@ -4,25 +4,52 @@ import { CheckCircle, XCircle, RefreshCw, AlertTriangle } from 'lucide-react'
 import { api } from '../api/client'
 import { connectSSE } from '../api/sse'
 import EmptyState from '../components/EmptyState'
-import type { Alert, SSEAlertEvent } from '../api/types'
+import type { Alert, AlertSeverity, SSEAlertEvent } from '../api/types'
 
-const SEVERITY_COLORS: Record<string, string> = {
-  warning: 'var(--color-defer)',
+const SEVERITY_COLORS: Record<AlertSeverity, string> = {
+  low: 'var(--color-allow)',
+  medium: 'var(--color-defer)',
+  high: 'var(--color-block)',
   critical: 'var(--color-block)',
-  info: 'var(--color-modify)',
+}
+
+function normalizeAlertSeverity(severity: string | undefined): AlertSeverity {
+  if (severity === 'warning') return 'medium'
+  if (severity === 'info') return 'low'
+  if (severity === 'critical' || severity === 'high' || severity === 'medium' || severity === 'low') {
+    return severity
+  }
+  return 'low'
+}
+
+function normalizeAlert(alert: Alert): Alert {
+  return {
+    ...alert,
+    severity: normalizeAlertSeverity(alert.severity),
+  }
+}
+
+const matchesAlertFilters = (
+  alert: Pick<Alert, 'severity' | 'acknowledged'>,
+  severity: AlertSeverity | '',
+  showAcknowledged: boolean | undefined,
+) => {
+  if (severity && alert.severity !== severity) return false
+  if (showAcknowledged !== undefined && alert.acknowledged !== showAcknowledged) return false
+  return true
 }
 
 export default function Alerts() {
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [loading, setLoading] = useState(true)
-  const [severity, setSeverity] = useState('')
+  const [severity, setSeverity] = useState<AlertSeverity | ''>('')
   const [showAcknowledged, setShowAcknowledged] = useState<boolean | undefined>(undefined)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
       const data = await api.alerts({ severity: severity || undefined, acknowledged: showAcknowledged, limit: 100 })
-      setAlerts(data)
+      setAlerts(data.map(normalizeAlert))
     } catch { /* ignore */ }
     setLoading(false)
   }, [severity, showAcknowledged])
@@ -37,7 +64,7 @@ export default function Alerts() {
         const data: SSEAlertEvent = JSON.parse(e.data)
         const newAlert: Alert = {
           alert_id: data.alert_id,
-          severity: data.severity,
+          severity: normalizeAlertSeverity(data.severity),
           metric: data.metric,
           session_id: data.session_id,
           message: data.message,
@@ -47,18 +74,18 @@ export default function Alerts() {
           acknowledged_by: null,
           acknowledged_at: null,
         }
-        setAlerts(prev => [newAlert, ...prev])
+        setAlerts(prev => matchesAlertFilters(newAlert, severity, showAcknowledged) ? [newAlert, ...prev] : prev)
       } catch { /* ignore */ }
     })
     return () => es.close()
-  }, [])
+  }, [severity, showAcknowledged])
 
   const handleAcknowledge = async (alertId: string) => {
     try {
       await api.acknowledgeAlert(alertId)
-      setAlerts(prev => prev.map(a =>
-        a.alert_id === alertId ? { ...a, acknowledged: true, acknowledged_by: 'dashboard', acknowledged_at: new Date().toISOString() } : a
-      ))
+      setAlerts(prev => prev
+        .map(a => a.alert_id === alertId ? { ...a, acknowledged: true, acknowledged_by: 'dashboard', acknowledged_at: new Date().toISOString() } : a)
+        .filter(alert => matchesAlertFilters(alert, severity, showAcknowledged)))
     } catch { /* ignore */ }
   }
 
@@ -75,10 +102,11 @@ export default function Alerts() {
           )}
         </h2>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <select value={severity} onChange={e => setSeverity(e.target.value)}>
+          <select value={severity} onChange={e => setSeverity(e.target.value as AlertSeverity | '')}>
             <option value="">All Severities</option>
-            <option value="info">Info</option>
-            <option value="warning">Warning</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
             <option value="critical">Critical</option>
           </select>
           <select

@@ -658,10 +658,77 @@ def test_start_with_latch_success(capsys):
 
     mock_gw.assert_called_once()
     mock_hub.assert_called_once()
-    mock_stop.assert_called()
+    mock_stop.assert_not_called()
     out = capsys.readouterr().out
     assert "latch" in out.lower()
     assert "ready" in out.lower()
+    assert "clawsentry latch stop" in out
+
+
+def test_start_with_latch_uses_hub_ui_url_in_banner(capsys):
+    """--with-latch banner should advertise hub UI, not gateway /ui."""
+    with mock.patch(
+        _START_COMMON_PATCHES["ensure_init"], return_value=False,
+    ), mock.patch(
+        _START_COMMON_PATCHES["load_dotenv"],
+    ), mock.patch(
+        _START_COMMON_PATCHES["read_token"], return_value="tok",
+    ), mock.patch(
+        "clawsentry.latch.binary_manager.BinaryManager.is_installed",
+        new_callable=mock.PropertyMock,
+        return_value=True,
+    ), mock.patch(
+        "clawsentry.latch.binary_manager.BinaryManager.binary_path",
+        new_callable=mock.PropertyMock,
+        return_value=Path("/fake/latch"),
+    ), mock.patch(
+        "clawsentry.latch.process_manager.ProcessManager.start_gateway",
+    ), mock.patch(
+        "clawsentry.latch.process_manager.ProcessManager.start_hub",
+    ), mock.patch(
+        "clawsentry.latch.process_manager.ProcessManager.wait_for_health",
+        return_value=True,
+    ), mock.patch(
+        "clawsentry.latch.process_manager.ProcessManager.stop_all",
+    ):
+        _run_start_cmd(with_latch=True, no_watch=True, hub_port=3006)
+
+    out = capsys.readouterr().out
+    assert "Web UI:     http://127.0.0.1:3006?token=tok" in out
+    assert "Web UI:     http://127.0.0.1:8080/ui?token=tok" not in out
+
+
+def test_start_with_latch_open_browser_targets_hub_ui():
+    """--with-latch browser target should match latch hub UI URL."""
+    with mock.patch(
+        _START_COMMON_PATCHES["ensure_init"], return_value=False,
+    ), mock.patch(
+        _START_COMMON_PATCHES["load_dotenv"],
+    ), mock.patch(
+        _START_COMMON_PATCHES["read_token"], return_value="tok",
+    ), mock.patch(
+        "clawsentry.latch.binary_manager.BinaryManager.is_installed",
+        new_callable=mock.PropertyMock,
+        return_value=True,
+    ), mock.patch(
+        "clawsentry.latch.binary_manager.BinaryManager.binary_path",
+        new_callable=mock.PropertyMock,
+        return_value=Path("/fake/latch"),
+    ), mock.patch(
+        "clawsentry.latch.process_manager.ProcessManager.start_gateway",
+    ), mock.patch(
+        "clawsentry.latch.process_manager.ProcessManager.start_hub",
+    ), mock.patch(
+        "clawsentry.latch.process_manager.ProcessManager.wait_for_health",
+        return_value=True,
+    ), mock.patch(
+        "clawsentry.latch.process_manager.ProcessManager.stop_all",
+    ), mock.patch(
+        "webbrowser.open",
+    ) as mock_browser:
+        _run_start_cmd(with_latch=True, no_watch=True, open_browser=True, hub_port=3006)
+
+    mock_browser.assert_called_once_with("http://127.0.0.1:3006?token=tok")
 
 
 def test_start_with_latch_gateway_health_fails(capsys):

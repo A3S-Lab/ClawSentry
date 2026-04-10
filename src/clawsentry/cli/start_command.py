@@ -10,6 +10,7 @@ import urllib.request
 from pathlib import Path
 
 from .init_command import run_init
+from .integrations_command import collect_integration_status
 from .initializers.base import ENV_FILE_NAME, read_env_file
 
 
@@ -262,6 +263,40 @@ def _read_token_from_env(target_dir: Path) -> str:
     return ""
 
 
+def _status_label(status: str) -> str:
+    return status.replace("_", " ")
+
+
+def _print_framework_readiness(
+    *,
+    active_frameworks: list[str],
+    readiness: dict[str, dict[str, object]],
+) -> bool:
+    """Render concise per-framework readiness hints in start banners."""
+    if not readiness:
+        return False
+
+    print("  Readiness:")
+    next_actions: list[str] = []
+    for framework in active_frameworks:
+        details = readiness.get(framework)
+        if not details:
+            continue
+        status = _status_label(str(details["status"]))
+        summary = str(details["summary"])
+        print(f"    {framework}: {status} - {summary}")
+        if details["status"] != "ready":
+            next_step = str(details.get("next_step", "")).strip()
+            if next_step and next_step != "No action required.":
+                next_actions.append(f"{framework}: {next_step}")
+    if next_actions:
+        print("  Next actions:")
+        for action in next_actions:
+            print(f"    {action}")
+        return True
+    return False
+
+
 def run_watch_loop(
     *,
     gateway_url: str,
@@ -346,26 +381,35 @@ def run_start(
     openclaw_setup_result = None
     if setup_openclaw and "openclaw" in active_frameworks:
         openclaw_setup_result = ensure_openclaw_setup(openclaw_home=openclaw_home)
+    integration_status = collect_integration_status(
+        target_dir,
+        openclaw_home=openclaw_home,
+    )
+    framework_readiness = integration_status["framework_readiness"]
 
     # 3. Read token
     token = _read_token_from_env(target_dir)
     gateway_url = f"http://{host}:{port}"
     log_path = Path("/tmp/clawsentry-gateway.log")
-    ui_url = f"{gateway_url}/ui"
+    gateway_ui_url = f"{gateway_url}/ui"
     if token:
-        ui_url += f"?token={token}"
+        gateway_ui_url += f"?token={token}"
 
     # -- Latch mode --
     if with_latch:
+        latch_ui_url = f"http://127.0.0.1:{hub_port}"
+        if token:
+            latch_ui_url += f"?token={token}"
         _run_start_with_latch(
             framework=framework,
             active_frameworks=active_frameworks,
+            framework_readiness=framework_readiness,
             host=host,
             port=port,
             hub_port=hub_port,
             token=token,
             gateway_url=gateway_url,
-            ui_url=ui_url,
+            ui_url=latch_ui_url,
             log_path=log_path,
             did_init=did_init,
             no_watch=no_watch,
@@ -390,7 +434,7 @@ def run_start(
                 "(use --setup-openclaw to modify ~/.openclaw/)"
             )
     print(f"  Gateway:    {gateway_url} (background)")
-    print(f"  Web UI:     {ui_url}")
+    print(f"  Web UI:     {gateway_ui_url}")
     print(f"  Log file:   {log_path}")
     if openclaw_setup_result is not None:
         if openclaw_setup_result.files_modified:
@@ -404,6 +448,12 @@ def run_start(
             print("  OpenClaw setup: already configured")
         for warning in openclaw_setup_result.warnings:
             print(f"  WARNING:    {warning}")
+    has_next_actions = _print_framework_readiness(
+        active_frameworks=active_frameworks,
+        readiness=framework_readiness,
+    )
+    if has_next_actions:
+        print("  Full diagnostics: clawsentry integrations status --json")
     print()
 
     # 5. Launch gateway
@@ -420,7 +470,7 @@ def run_start(
     # 6b. Open browser if requested
     if open_browser:
         import webbrowser
-        webbrowser.open(ui_url)
+        webbrowser.open(gateway_ui_url)
 
     if no_watch:
         print(f"Gateway running (PID {proc.pid}). Use 'clawsentry stop' to stop it.")
@@ -448,6 +498,7 @@ def _run_start_with_latch(
     *,
     framework: str,
     active_frameworks: list[str],
+    framework_readiness: dict[str, dict[str, object]],
     host: str,
     port: int,
     hub_port: int,
@@ -476,6 +527,7 @@ def _run_start_with_latch(
 
     pm = ProcessManager()
     hub_url = f"http://127.0.0.1:{hub_port}"
+    keep_running = False
 
     # Banner
     print(f"\nClawSentry starting (Latch mode)...")
@@ -494,6 +546,12 @@ def _run_start_with_latch(
     print(f"  Latch Hub:  {hub_url}")
     print(f"  Web UI:     {ui_url}")
     print(f"  Log file:   {log_path}")
+    has_next_actions = _print_framework_readiness(
+        active_frameworks=active_frameworks,
+        readiness=framework_readiness,
+    )
+    if has_next_actions:
+        print("  Full diagnostics: clawsentry integrations status --json")
     print()
 
     try:
@@ -523,6 +581,7 @@ def _run_start_with_latch(
 
         if no_watch:
             print("Use Ctrl+C or 'clawsentry latch stop' to shut down.")
+            keep_running = True
             return
 
         # Watch loop
@@ -536,5 +595,7 @@ def _run_start_with_latch(
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
+        if keep_running:
+            return
         pm.stop_all()
         print("Gateway + Latch Hub stopped.")

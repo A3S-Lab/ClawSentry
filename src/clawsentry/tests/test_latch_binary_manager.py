@@ -129,6 +129,45 @@ def test_extract_tar_gz(tmp_path: Path):
     assert (dest / "latch").is_file()
 
 
+def test_extract_tar_gz_without_filter_support(tmp_path: Path):
+    archive = tmp_path / "test.tar.gz"
+    archive.write_bytes(b"placeholder")
+    dest = tmp_path / "out"
+    dest.mkdir()
+
+    class FakeTarFile:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def extractall(self, path):
+            (Path(path) / "latch").write_text("#!/bin/sh\necho ok")
+
+    with mock.patch("tarfile.open", return_value=FakeTarFile()):
+        _extract(archive, dest)
+
+    assert (dest / "latch").is_file()
+
+
+def test_extract_tar_gz_rejects_path_traversal(tmp_path: Path):
+    archive = tmp_path / "traversal.tar.gz"
+    payload = tmp_path / "payload.txt"
+    payload.write_text("bad")
+
+    with tarfile.open(archive, "w:gz") as tf:
+        tf.add(payload, arcname="../escape.txt")
+
+    dest = tmp_path / "out"
+    dest.mkdir()
+
+    with pytest.raises(ValueError, match="Unsafe archive member"):
+        _extract(archive, dest)
+
+    assert not (tmp_path / "escape.txt").exists()
+
+
 def test_extract_unsupported(tmp_path: Path):
     archive = tmp_path / "test.tar.bz2"
     archive.write_bytes(b"")

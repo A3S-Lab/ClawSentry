@@ -136,12 +136,11 @@ class L1PolicyEngine:
 
         if self._should_run_l2(event, context, l1_snapshot, requested_tier):
             try:
-                snapshot = self._run_l2_analysis(
+                snapshot, actual_tier = self._run_l2_analysis(
                     event, context, l1_snapshot, deadline_budget_ms,
                     config_override=effective_config,
                 )
                 decision = self._decide(event, snapshot)
-                actual_tier = DecisionTier.L2
             except Exception:
                 logging.getLogger(__name__).warning(
                     "L2 analysis failed; falling back to L1", exc_info=True,
@@ -274,7 +273,7 @@ class L1PolicyEngine:
         l1_snapshot: RiskSnapshot,
         requested_tier: DecisionTier,
     ) -> bool:
-        if requested_tier == DecisionTier.L2:
+        if requested_tier in (DecisionTier.L2, DecisionTier.L3):
             return True
         if event.event_type == EventType.PRE_ACTION and l1_snapshot.risk_level == RiskLevel.MEDIUM:
             return True
@@ -294,7 +293,7 @@ class L1PolicyEngine:
         l1_snapshot: RiskSnapshot,
         deadline_budget_ms: float | None = None,
         config_override: Optional[DetectionConfig] = None,
-    ) -> RiskSnapshot:
+    ) -> tuple[RiskSnapshot, DecisionTier]:
         # Run async analyzer synchronously
         try:
             loop = asyncio.get_running_loop()
@@ -331,6 +330,11 @@ class L1PolicyEngine:
         # Build RiskSnapshot from L2Result (upgrade-only enforced here)
         target_level = result.target_level
         target_level = self._max_risk_level(target_level, l1_snapshot.risk_level)
+        actual_tier = result.decision_tier
+
+        if actual_tier == DecisionTier.L1:
+            return l1_snapshot.model_copy(update={"l3_trace": result.trace}), DecisionTier.L1
+
         upgraded = target_level != l1_snapshot.risk_level
         override = (
             RiskOverride(
@@ -344,18 +348,19 @@ class L1PolicyEngine:
             l1_snapshot.composite_score,
             self._min_score_for_level[target_level],
         )
+        classified_by = ClassifiedBy.L3 if actual_tier == DecisionTier.L3 else ClassifiedBy.L2
         return RiskSnapshot(
             risk_level=target_level,
             composite_score=score,
             dimensions=l1_snapshot.dimensions,
             short_circuit_rule=l1_snapshot.short_circuit_rule,
             missing_dimensions=list(l1_snapshot.missing_dimensions),
-            classified_by=ClassifiedBy.L2,
+            classified_by=classified_by,
             classified_at=utc_now_iso(),
             override=override,
             l1_snapshot=l1_snapshot if upgraded else None,
             l3_trace=result.trace,
-        )
+        ), actual_tier
 
     @staticmethod
     def _max_risk_level(a: RiskLevel, b: RiskLevel) -> RiskLevel:
